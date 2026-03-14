@@ -1,0 +1,10 @@
+
+Pillow
+mutagen
+pygame
+numpy
+librosa
+matplotlib
+pydub
+beautifulsoup4
+pillow
