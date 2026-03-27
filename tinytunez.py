@@ -209,13 +209,17 @@ class TinyTunez:
         # Debounced playlist save timer
         self.playlist_save_timer = None
         
+        # Initialize shuffle history
+        self.shuffle_history = []  # Track played songs in shuffle mode
+        self.shuffle_history_index = -1  # Current position in shuffle history
+        
         # Scrolling variables for song title
         self.scroll_text = ""
         self.scroll_position = 0
         self.scroll_direction = 1
         self.scroll_enabled = False
         self.scroll_pause_counter = 0
-        self.scroll_speed = 100  # milliseconds between scroll updates (slower)
+        self.scroll_speed = 200  # milliseconds between scroll updates (slower)
         
         # Last played song tracking
         self.last_played_file = "last_played.json"
@@ -315,6 +319,10 @@ class TinyTunez:
             
         except Exception as e:
             self.use_pygame_fallback = True
+        
+        # Initialize player usage counter
+        self.player_usage_count = 0
+        self.max_player_uses = 50  # Reinitialize after 50 play/stop cycles
         
         # Create GUI first
         self.create_widgets()
@@ -1052,7 +1060,7 @@ class TinyTunez:
         
         # Volume controls on right side in same row
         frame_volume_controls = ModernFrame(frame_player_controls, bg='#161b22', name='volume_frame')
-        frame_volume_controls.pack(side=tk.RIGHT, padx=10, pady=5)
+        frame_volume_controls.pack(side=tk.RIGHT, padx=(10, 3), pady=5)  # Reduced right padding from 10 to 3px
         
         try:
             # Mute button
@@ -1090,7 +1098,7 @@ class TinyTunez:
         self.volume_slider.pack(side=tk.LEFT)
         
         # Volume percentage label
-        self.volume_label = ModernLabel(frame_volume_controls, text="70%", font=('Segoe UI', 9), bg='#161b22', fg='#8b949e', width=4, anchor='e', name='volume_label')  # Fixed width 4 chars, right-aligned
+        self.volume_label = ModernLabel(frame_volume_controls, text="70%", font=('Segoe UI', 9), bg='#161b22', fg='#8b949e', width=5, anchor='center', name='volume_label')  # Width 5 chars for "100%", centered
         self.volume_label.pack(side=tk.LEFT, padx=(5, 0))
         
     def create_playlist(self, parent):
@@ -1304,7 +1312,7 @@ class TinyTunez:
             padx=8,
             pady=4
         )
-        self.edit_lyrics_btn.pack(side=tk.RIGHT, padx=15, pady=8)
+        self.edit_lyrics_btn.pack(side=tk.RIGHT, padx=5, pady=8)  # Reduced padding from 15px to 5px
         # Initially disable edit button until lyrics are loaded
         self.edit_lyrics_btn.config(state=tk.DISABLED)
         
@@ -1537,7 +1545,7 @@ class TinyTunez:
         
         # Estimate if text needs scrolling
         text_length = len(self.scroll_text)
-        max_display_chars = 25  # Maximum characters that fit in the fixed width
+        max_display_chars = 30  # Maximum characters that fit in the fixed width
         
         if text_length <= max_display_chars:
             # Text fits, no need to scroll
@@ -1545,9 +1553,14 @@ class TinyTunez:
             self.root.after(1000, self.scroll_song_title)
             return
         
-        # Handle pausing at ends
+        # Handle pausing at ends - check this BEFORE updating position
         if self.scroll_pause_counter > 0:
             self.scroll_pause_counter -= 1
+            # Keep displaying the same text while pausing
+            display_text = self.scroll_text[self.scroll_position:self.scroll_position + max_display_chars]
+            if len(display_text) < max_display_chars:
+                display_text = display_text.ljust(max_display_chars)
+            self.song_title_label.config(text=display_text)
             self.root.after(self.scroll_speed, self.scroll_song_title)
             return
         
@@ -1559,16 +1572,18 @@ class TinyTunez:
             # Scrolling to the right (text moves left)
             if self.scroll_position >= max_scroll:
                 # Reached the end, pause and reverse
-                self.scroll_pause_counter = 20  # Pause for 20 cycles
+                self.scroll_pause_counter = 10  # Pause for 10 cycles (2 seconds)
                 self.scroll_direction = -1
+                # Don't update position this cycle, just pause
             else:
                 self.scroll_position += 1
         else:
             # Scrolling to the left (text moves right)
             if self.scroll_position <= 0:
                 # Reached the start, pause and reverse
-                self.scroll_pause_counter = 20  # Pause for 20 cycles
+                self.scroll_pause_counter = 10  # Pause for 10 cycles (2 seconds)
                 self.scroll_direction = 1
+                # Don't update position this cycle, just pause
             else:
                 self.scroll_position -= 1
         
@@ -1730,17 +1745,6 @@ class TinyTunez:
                         if os.path.exists(lrc_file) or os.path.exists(txt_file):
                             return True
                         
-                        # 2. Check centralized TinyTunez Lyrics folder
-                        try:
-                            tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-                            lrc_path = tinytunez_folder / "synced_lyrics" / f"{artist} - {title}.lrc"
-                            txt_path = tinytunez_folder / "plain_txt_lyrics" / f"{artist} - {title}.txt"
-                            
-                            if lrc_path.exists() or txt_path.exists():
-                                return True
-                        except:
-                            pass
-                        
                         return False
             return False
         except:
@@ -1805,6 +1809,9 @@ class TinyTunez:
                 display_name = metadata.get('display_name', os.path.basename(song_path))
                 self.song_title_label.config(text=display_name)
                 self.song_artist_label.config(text="Last Played")
+                
+                # Start scrolling for the last played song title
+                self.start_scrolling(display_name)
                 
                 # Load and display the album cover for the last played song
                 self.display_album_cover(song_path)
@@ -1998,7 +2005,6 @@ class TinyTunez:
                 return {
                     'lyrics_folder': None,
                     'lyrics_preference': 'synced_first',  # New setting: synced_first, synced_only, plain_only
-                    'lyrics_storage': 'centralized',  # New setting: centralized, album_folders, hybrid
                     'theme': 'dark',
                     'volume': 0.7
                 }
@@ -2016,25 +2022,11 @@ class TinyTunez:
     
     def get_lyrics_folder(self):
         """Get the base lyrics folder path."""
-        if self.custom_lyrics_folder and os.path.exists(self.custom_lyrics_folder):
+        if self.custom_lyrics_folder:
             return self.custom_lyrics_folder
-        elif self.playlist:
-            # Fallback to music folder
-            music_folder = Path(self.playlist[0]).parent
-            return str(music_folder)
-        # Fallback to current directory
+        
+        # Default to current directory
         return str(Path.cwd())
-    
-    def get_tinytunez_lyrics_folder(self):
-        """Get the TinyTunez Lyrics folder path (creates the main folder)."""
-        base_folder = Path(self.get_lyrics_folder())
-        # Check if base_folder already ends with "TinyTunez Lyrics" to avoid duplication
-        if base_folder.name == "TinyTunez Lyrics":
-            tinytunez_folder = base_folder
-        else:
-            tinytunez_folder = base_folder / "TinyTunez Lyrics"
-        tinytunez_folder.mkdir(parents=True, exist_ok=True)
-        return str(tinytunez_folder)
     
     def choose_lyrics_folder(self):
         """Open dialog to choose lyrics folder."""
@@ -2089,7 +2081,6 @@ class TinyTunez:
             
             # Apply peach theme to all widgets in the dialog
             self.apply_peach_settings_children(dialog, theme)
-            print(f"[debug] Settings dialog styled with peach theme")
             
         except Exception as e:
             print(f"Error applying peach theme to Settings dialog: {e}")
@@ -2127,21 +2118,18 @@ class TinyTunez:
                 # Notebook (tabs)
                 elif widget_class == 'Notebook':
                     # Notebook styling is handled in the main function
-                    print(f"[debug] Notebook {widget_name} found, tabs styled with #FFB366")
                     # Recursively apply to children (tab content)
                     self.apply_peach_settings_children(widget, theme)
                 
                 # Tab frames
                 elif widget_class == 'Frame':
                     widget.configure(bg='#FFE0CC')  # Light peach background
-                    print(f"[debug] Frame {widget_name} styled with #FFE0CC background")
                     # Recursively apply to children
                     self.apply_peach_settings_children(widget, theme)
                 
                 # ModernFrames
                 elif widget_class == 'TFrame' or (hasattr(widget, '__class__') and widget.__class__.__name__ == 'ModernFrame'):
                     widget.configure(bg='#FFE0CC')  # Light peach background
-                    print(f"[debug] ModernFrame {widget_name} styled with #FFE0CC background")
                     # Recursively apply to children
                     self.apply_peach_settings_children(widget, theme)
                 
@@ -2154,7 +2142,6 @@ class TinyTunez:
                         activebackground='#FFE0CC',
                         activeforeground=theme['text_primary']
                     )
-                    print(f"[debug] Radiobutton {widget_name} styled with #FFE0CC background")
                 
                 # Checkbuttons
                 elif widget_class == 'Checkbutton':
@@ -2165,7 +2152,6 @@ class TinyTunez:
                         activebackground='#FFE0CC',
                         activeforeground=theme['text_primary']
                     )
-                    print(f"[debug] Checkbutton {widget_name} styled with #FFE0CC background")
                 
                 # Buttons
                 elif widget_class == 'Button':
@@ -2183,9 +2169,8 @@ class TinyTunez:
                             activebackground=theme['primary_dark'],
                             activeforeground=theme['text_on_primary']
                         )
-                    print(f"[debug] Button {widget_name} styled with #FFB366 background")
-                
-                # Recursively apply to other children
+                    
+                    # Recursively apply to other children
                 else:
                     self.apply_peach_settings_children(widget, theme)
                     
@@ -2206,7 +2191,6 @@ class TinyTunez:
             
             # Restore dark theme to all widgets in the dialog
             self.restore_dark_settings_children(dialog)
-            print(f"[debug] Settings dialog restored to dark theme")
             
         except Exception as e:
             print(f"Error restoring dark theme to Settings dialog: {e}")
@@ -2305,7 +2289,7 @@ class TinyTunez:
                             self.apply_peach_settings_dialog(widget)
                         else:
                             self.restore_dark_settings_dialog(widget)
-                        print(f"[debug] Updated Settings dialog theme to {self.current_theme}")
+                        print(f"Updated Settings dialog theme to {self.current_theme}")
         except Exception as e:
             print(f"Error updating Settings dialogs theme: {e}")
     
@@ -2346,120 +2330,6 @@ class TinyTunez:
         tab_lyrics_settings = tk.Frame(notebook_settings, bg='#161b22')
         notebook_settings.add(tab_lyrics_settings, text="🎵 Lyrics")
         
-        # Lyrics storage section
-        frame_lyrics_storage = tk.Frame(tab_lyrics_settings, bg='#161b22')
-        frame_lyrics_storage.pack(fill=tk.X, padx=15, pady=15)
-        
-        label_lyrics_storage_title = tk.Label(
-            frame_lyrics_storage,
-            text="Lyrics Storage Location:",
-            font=('Segoe UI', 12),
-            bg='#161b22',
-            fg='#8b949e'
-        )
-        label_lyrics_storage_title.pack(anchor=tk.W)
-        
-        # Get current storage preference
-        current_storage = self.settings.get('lyrics_storage', 'centralized')
-        
-        # Radio buttons for lyrics storage
-        storage_var = tk.StringVar(value=current_storage)
-        
-        def on_storage_change():
-            self.settings['lyrics_storage'] = storage_var.get()
-            self.save_settings()
-            print(f"[settings] Lyrics storage changed to: {storage_var.get()}")
-        
-        # Option 1: Centralized storage
-        rb_storage_centralized = tk.Radiobutton(
-            frame_lyrics_storage,
-            text="📁 Centralized - Store all lyrics in TinyTunez Lyrics folder",
-            variable=storage_var,
-            value='centralized',
-            font=('Segoe UI', 10),
-            bg='#161b22',
-            fg='#f0f6fc',
-            selectcolor='#21262d',
-            activebackground='#161b22',
-            activeforeground='#f0f6fc',
-            command=on_storage_change
-        )
-        rb_storage_centralized.pack(anchor=tk.W, pady=5)
-        
-        # Option 2: Album folders
-        rb_storage_album = tk.Radiobutton(
-            frame_lyrics_storage,
-            text="📂 Album Folders - Store lyrics next to each album",
-            variable=storage_var,
-            value='album_folders',
-            font=('Segoe UI', 10),
-            bg='#161b22',
-            fg='#f0f6fc',
-            selectcolor='#21262d',
-            activebackground='#161b22',
-            activeforeground='#f0f6fc',
-            command=on_storage_change
-        )
-        rb_storage_album.pack(anchor=tk.W, pady=5)
-        
-        # Option 3: Hybrid approach
-        rb_storage_hybrid = tk.Radiobutton(
-            frame_lyrics_storage,
-            text="🔄 Hybrid - Try album folders first, fallback to centralized",
-            variable=storage_var,
-            value='hybrid',
-            font=('Segoe UI', 10),
-            bg='#161b22',
-            fg='#f0f6fc',
-            selectcolor='#21262d',
-            activebackground='#161b22',
-            activeforeground='#f0f6fc',
-            command=on_storage_change
-        )
-        rb_storage_hybrid.pack(anchor=tk.W, pady=5)
-        
-        # Lyrics folder section (only show for centralized/hybrid)
-        frame_lyrics_folder = tk.Frame(tab_lyrics_settings, bg='#161b22')
-        frame_lyrics_folder.pack(fill=tk.X, padx=15, pady=15)
-        
-        label_lyrics_folder_title = tk.Label(
-            frame_lyrics_folder,
-            text="Centralized Lyrics Folder Location:",
-            font=('Segoe UI', 12),
-            bg='#161b22',
-            fg='#8b949e'
-        )
-        label_lyrics_folder_title.pack(anchor=tk.W)
-        
-        # Current folder display
-        # Use the fixed get_tinytunez_lyrics_folder() function to get the correct path
-        current_tinytunez_folder = self.get_tinytunez_lyrics_folder()
-        label_lyrics_folder_path = tk.Label(
-            frame_lyrics_folder,
-            text=current_tinytunez_folder if current_tinytunez_folder else "Not set",
-            font=('Segoe UI', 10),
-            bg='#21262d',
-            fg='#f0f6fc',
-            relief=tk.SUNKEN,
-            padx=10,
-            pady=5
-        )
-        label_lyrics_folder_path.pack(fill=tk.X, pady=5)
-        
-        # Choose folder button
-        btn_choose_lyrics_folder = tk.Button(
-            frame_lyrics_folder,
-            text="Choose Folder...",
-            command=self.choose_lyrics_folder,
-            bg='#238636',
-            fg='white',
-            font=('Segoe UI', 10),
-            relief=tk.RAISED,
-            padx=20,
-            pady=5
-        )
-        btn_choose_lyrics_folder.pack(pady=5)
-        
         # Lyrics preference section
         frame_lyrics_preference = tk.Frame(tab_lyrics_settings, bg='#161b22')
         frame_lyrics_preference.pack(fill=tk.X, padx=15, pady=15)
@@ -2482,7 +2352,6 @@ class TinyTunez:
         def on_preference_change():
             self.settings['lyrics_preference'] = preference_var.get()
             self.save_settings()
-            print(f"[settings] Lyrics preference changed to: {preference_var.get()}")
         
         # Option 1: Synced lyrics first (default)
         rb_preference_synced_first = tk.Radiobutton(
@@ -2531,17 +2400,6 @@ class TinyTunez:
             command=on_preference_change
         )
         rb_preference_plain_only.pack(anchor=tk.W, pady=5)
-        
-        # Lyrics info
-        label_lyrics_info = tk.Label(
-            tab_lyrics_settings,
-            text="This folder will contain:\n- synced_lyrics/ (downloaded synced lyrics)\n- plain_txt_lyrics/ (plain text lyrics)",
-            font=('Segoe UI', 9),
-            bg='#161b22',
-            fg='#8b949e',
-            justify=tk.LEFT
-        )
-        label_lyrics_info.pack(padx=20, pady=10)
         
         # Tab 2: Audio Settings (placeholder for future audio settings)
         tab_audio_settings = tk.Frame(notebook_settings, bg='#161b22')
@@ -3128,30 +2986,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         self.save_star_cache()
     
     def check_cached_lyrics(self, artist, title):
-        """Check if lyrics are cached for this song across all storage locations."""
+        """Check if lyrics are cached for this song in album folders."""
         try:
-            # First check centralized TinyTunez Lyrics folder
-            tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-            
-            # Check for LRC file in synced_lyrics
-            lrc_filename = f"{artist} - {title}.lrc"
-            lrc_path = tinytunez_folder / "synced_lyrics" / lrc_filename
-            
-            if lrc_path.exists():
-                # Update cache
-                self.update_star_cache(artist, title, has_lyrics=True)
-                return True
-            
-            # Check for TXT file in plain_txt_lyrics
-            txt_filename = f"{artist} - {title}.txt"
-            txt_path = tinytunez_folder / "plain_txt_lyrics" / txt_filename
-            
-            if txt_path.exists():
-                # Update cache
-                self.update_star_cache(artist, title, has_lyrics=True)
-                return True
-            
-            # Also check album folders for all songs in playlist
+            # Check album folders for all songs in playlist
             for song_path, metadata in zip(self.playlist, self.playlist_metadata):
                 if metadata and 'artist' in metadata and 'title' in metadata:
                     if metadata['artist'] == artist and metadata['title'] == title:
@@ -3186,11 +3023,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                 new_values = list(values)
                                 new_values[0] = star_icon
                                 self.playlist_treeview.item(item, values=new_values)
-                                print(f"[lyrics] Updated star for {artist} - {title}")
                                 break
                         break
         except Exception as e:
-            print(f"[lyrics] Error updating star: {e}")
+            print(f"Error updating star: {e}")
     
     def filter_playlist(self, *args):
         """Filter playlist based on search query."""
@@ -3426,7 +3262,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Apply peach theme to all widgets in the dialog
             self.apply_peach_folder_selection_children(dialog, theme)
-            print(f"[debug] Select Music Folders dialog styled with peach theme")
             
         except Exception as e:
             print(f"Error applying peach theme to Select Music Folders dialog: {e}")
@@ -3454,14 +3289,12 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # ModernFrames
                 elif widget_class == 'TFrame' or (hasattr(widget, '__class__') and widget.__class__.__name__ == 'ModernFrame'):
                     widget.configure(bg='#FFE0CC')  # Light peach background
-                    print(f"[debug] ModernFrame {widget_name} styled with #FFE0CC background")
                     # Recursively apply to children
                     self.apply_peach_folder_selection_children(widget, theme)
                 
                 # Regular Frames
                 elif widget_class == 'Frame':
                     widget.configure(bg='#FFE0CC')  # Light peach background
-                    print(f"[debug] Frame {widget_name} styled with #FFE0CC background")
                     # Recursively apply to children
                     self.apply_peach_folder_selection_children(widget, theme)
                 
@@ -3473,7 +3306,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         selectbackground=theme['primary'],
                         selectforeground=theme['text_on_primary']
                     )
-                    print(f"[debug] Listbox {widget_name} styled with white background")
                 
                 # Buttons
                 elif widget_class == 'Button':
@@ -3519,9 +3351,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             activebackground=theme['primary_dark'],
                             activeforeground=theme['text_on_primary']
                         )
-                    print(f"[debug] Button {widget_name} styled with #FFB366 background")
-                
-                # Recursively apply to other children
+                    
+                    # Recursively apply to other children
                 else:
                     self.apply_peach_folder_selection_children(widget, theme)
                     
@@ -3536,7 +3367,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Restore dark theme to all widgets in the dialog
             self.restore_dark_folder_selection_children(dialog)
-            print(f"[debug] Select Music Folders dialog restored to dark theme")
             
         except Exception as e:
             print(f"Error restoring dark theme to Select Music Folders dialog: {e}")
@@ -3616,7 +3446,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             self.apply_peach_folder_selection_dialog(widget)
                         else:
                             self.restore_dark_folder_selection_dialog(widget)
-                        print(f"[debug] Updated Select Music Folders dialog theme to {self.current_theme}")
+                        print(f"Updated Select Music Folders dialog theme to {self.current_theme}")
         except Exception as e:
             print(f"Error updating Select Music Folders dialogs theme: {e}")
     
@@ -3779,29 +3609,81 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 messagebox.showwarning("No Directory", "Please select a parent directory first.")
                 return
             
-            total_songs = 0
-            for index in selected_indices:
-                folder_name = folder_listbox.get(index)
-                folder_path = os.path.join(current_directory, folder_name)
-                songs_added = self.scan_music_folder(folder_path, show_progress=False)
-                total_songs += songs_added
+            # Create progress dialog for large selections
+            if len(selected_indices) > 50:
+                progress_window = tk.Toplevel(window_folder_selection)
+                progress_window.title("Processing Folders...")
+                progress_window.geometry("400x150")
+                progress_window.resizable(False, False)
+                progress_window.transient(window_folder_selection)
+                progress_window.grab_set()
+                
+                # Center the progress dialog
+                progress_window.update_idletasks()
+                x = (progress_window.winfo_screenwidth() // 2) - (400 // 2)
+                y = (progress_window.winfo_screenheight() // 2) - (150 // 2)
+                progress_window.geometry(f"400x150+{x}+{y}")
+                
+                tk.Label(progress_window, text=f"Processing {len(selected_indices)} folders...", 
+                        font=('Segoe UI', 12)).pack(pady=20)
+                
+                progress_var = tk.DoubleVar()
+                progress_bar = ttk.Progressbar(progress_window, variable=progress_var, 
+                                            maximum=len(selected_indices), length=350)
+                progress_bar.pack(pady=10)
+                
+                status_label = tk.Label(progress_window, text="Starting...", font=('Segoe UI', 10))
+                status_label.pack(pady=5)
+                
+                # Update GUI to show progress dialog
+                progress_window.update()
+            else:
+                progress_window = None
+                progress_var = None
+                status_label = None
             
-            messagebox.showinfo("Success", f"Added {total_songs} songs from {len(selected_indices)} folder(s).")
-            window_folder_selection.destroy()
+            total_songs = 0
+            try:
+                for i, index in enumerate(selected_indices):
+                    # Update progress
+                    if progress_window:
+                        progress_var.set(i + 1)
+                        folder_name = folder_listbox.get(index)
+                        status_label.config(text=f"Processing: {folder_name} ({i+1}/{len(selected_indices)})")
+                        progress_window.update()
+                    
+                    # Process folder
+                    folder_name = folder_listbox.get(index)
+                    folder_path = os.path.join(current_directory, folder_name)
+                    songs_added = self.scan_music_folder(folder_path, show_progress=False)
+                    total_songs += songs_added
+                    
+                    # Small delay to prevent freezing with very large selections
+                    if progress_window and i % 10 == 0:
+                        progress_window.update_idletasks()
+                
+                # Show success message
+                if progress_window:
+                    progress_window.destroy()
+                
+                messagebox.showinfo("Success", f"Added {total_songs} songs from {len(selected_indices)} folder(s).")
+                window_folder_selection.destroy()
+                
+            except Exception as e:
+                if progress_window:
+                    progress_window.destroy()
+                messagebox.showerror("Error", f"Error processing folders: {str(e)}")
         
         def cancel():
             window_folder_selection.destroy()
         
         # Keyboard shortcuts
         def handle_key(event):
-            print(f"Key pressed: {event.keysym}, state: {event.state}")  # Debug
             if event.state & 0x4:  # Ctrl key
                 if event.keysym.lower() == 'a':
-                    print("Ctrl+A detected")  # Debug
                     select_all()
                     return "break"
             elif event.keysym == 'Escape':
-                print("Escape detected")  # Debug
                 cancel()
                 return "break"
         
@@ -3815,7 +3697,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         # Enhanced selection handling for Shift+Click
         def handle_shift_click(event):
-            print("Shift+Click detected")  # Debug
             clicked_index = folder_listbox.nearest(event.y)
             if clicked_index == -1:
                 return
@@ -3826,7 +3707,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             if current_selection:
                 # Use the most recently selected item as the anchor
                 anchor_index = current_selection[-1]
-                print(f"Using anchor index: {anchor_index}, clicked index: {clicked_index}")
                 
                 # Clear current selection first
                 folder_listbox.selection_clear(0, tk.END)
@@ -3834,22 +3714,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Select range from anchor to clicked index
                 if clicked_index >= anchor_index:
                     folder_listbox.selection_set(anchor_index, clicked_index)
-                    print(f"Selected range: {anchor_index} to {clicked_index}")
                 else:
                     folder_listbox.selection_set(clicked_index, anchor_index)
-                    print(f"Selected range: {clicked_index} to {anchor_index}")
             else:
                 # No current selection, just select the clicked item
                 folder_listbox.selection_set(clicked_index)
-                print(f"No anchor, selected single index: {clicked_index}")
         
         # Bind Shift+Click
         folder_listbox.bind('<Shift-Button-1>', handle_shift_click)
         
         # Debug click handler - but don't interfere with Ctrl+Click
         def handle_click(event):
-            print(f"Click at index: {folder_listbox.nearest(event.y)}, state: {event.state}")  # Debug
             # Don't return "break" to allow default Ctrl+Click behavior to work
+            pass
         
         folder_listbox.bind('<Button-1>', handle_click)
         
@@ -3859,18 +3736,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             if clicked_index == -1:
                 return
             
-            print(f"Ctrl+Click at index: {clicked_index}")  # Debug
-            
             # Check if this item is already selected
             current_selection = folder_listbox.curselection()
             if clicked_index in current_selection:
                 # Deselect this item
                 folder_listbox.selection_clear(clicked_index)
-                print(f"Deselected index: {clicked_index}")
             else:
                 # Select this item
                 folder_listbox.selection_set(clicked_index)
-                print(f"Selected index: {clicked_index}")
             
             return "break"  # Prevent default behavior
         
@@ -3952,61 +3825,26 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         window_folder_selection.wait_window()
     
     def open_lyrics_folder(self):
-        """Open the appropriate lyrics folder in the system file explorer based on storage preference."""
+        """Open the album folder for the current song in the system file explorer."""
         try:
-            storage = self.settings.get('lyrics_storage', 'centralized')
-            
-            # If we have a current song and using album or hybrid storage, try to open the album folder first
-            if storage in ['album_folders', 'hybrid'] and hasattr(self, 'current_song_path') and self.current_song_path:
+            # If we have a current song, try to open the album folder
+            if hasattr(self, 'current_song_path') and self.current_song_path:
                 album_path = self.get_album_lyrics_path(self.current_song_path)
                 if album_path and os.path.exists(album_path):
-                    # Check if there are any lyrics files in the album folder
-                    try:
-                        lyrics_files = list(Path(album_path).glob("*.lrc")) + list(Path(album_path).glob("*.txt"))
-                        if lyrics_files:
-                            if platform.system() == "Windows":
-                                os.startfile(album_path)
-                            elif platform.system() == "Darwin":  # macOS
-                                subprocess.run(["open", album_path])
-                            else:  # Linux
-                                subprocess.run(["xdg-open", album_path])
-                            print(f"[ui] Opened album lyrics folder: {album_path}")
-                            return
-                        else:
-                            # For album/hybrid storage, open the album folder even if no lyrics found
-                            if platform.system() == "Windows":
-                                os.startfile(album_path)
-                            elif platform.system() == "Darwin":  # macOS
-                                subprocess.run(["open", album_path])
-                            else:  # Linux
-                                subprocess.run(["xdg-open", album_path])
-                            print(f"[ui] Opened album folder (no lyrics found): {album_path}")
-                            return
-                    except Exception as e:
-                        # If we can't check for files, still try to open the folder
-                        if platform.system() == "Windows":
-                            os.startfile(album_path)
-                        elif platform.system() == "Darwin":  # macOS
-                            subprocess.run(["open", album_path])
-                        else:  # Linux
-                            subprocess.run(["xdg-open", album_path])
-                        print(f"[ui] Opened album folder (error checking files): {album_path}")
-                        return
-            
-            # Fallback to centralized folder
-            lyrics_folder = self.get_tinytunez_lyrics_folder()
-            if os.path.exists(lyrics_folder):
-                if platform.system() == "Windows":
-                    os.startfile(lyrics_folder)
-                elif platform.system() == "Darwin":  # macOS
-                    subprocess.run(["open", lyrics_folder])
-                else:  # Linux
-                    subprocess.run(["xdg-open", lyrics_folder])
-                print(f"[ui] Opened centralized lyrics folder: {lyrics_folder}")
+                    # Open the album folder
+                    if platform.system() == "Windows":
+                        os.startfile(album_path)
+                    elif platform.system() == "Darwin":  # macOS
+                        subprocess.run(["open", album_path])
+                    else:  # Linux
+                        subprocess.run(["xdg-open", album_path])
+                    return
+                else:
+                    messagebox.showinfo("Lyrics Folder", f"Album folder not found:\n{album_path}")
             else:
-                messagebox.showinfo("Lyrics Folder", f"Lyrics folder not found:\n{lyrics_folder}\n\nTry downloading some lyrics first!")
+                messagebox.showinfo("Lyrics Folder", "No song currently selected. Please select a song first.")
         except Exception as e:
-            messagebox.showerror("Error", f"Could not open lyrics folder:\n{str(e)}")
+            messagebox.showerror("Error", f"Could not open album folder:\n{str(e)}")
     
     def scan_music_folder(self, folder_path, show_progress=True):
         """Scan a music folder and add songs to playlist. Returns count of songs added."""
@@ -4203,16 +4041,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.has_manually_played = True  # Mark that user has manually played
                 self.play_selected_song()
                 self.auto_play_enabled = False  # Disable again after playing
-                
-                print(f"[playlist] Playing song at original index {song_index}: {os.path.basename(self.playlist[song_index])}")
             else:
-                print(f"[playlist] Error: Invalid song_index {song_index}, playlist length={len(self.playlist)}")
-                
                 # Fallback to the old method if original_index not found
                 values = self.playlist_treeview.item(item, 'values')
                 if len(values) >= 3:
                     display_name = values[2]  # Song name is in the third column
-                    print(f"[playlist] Fallback: searching for display_name='{display_name}'")
                     
                     # Find the matching song in the original playlist
                     song_index = -1
@@ -4228,7 +4061,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         
                         if metadata_name == display_name:
                             song_index = i
-                            print(f"[playlist] Fallback found match at index {i}: {metadata_name}")
                             break
                     
                     if song_index >= 0:
@@ -4313,19 +4145,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Create LRCLib search URL - use the correct format
             query = f"{artist} {title}".replace(' ', '+')
             url = f"https://lrclib.net/search/{query}"
-            print(f"[lyrics] Opening LRCLib search: {url}")
             webbrowser.open(url)
         except Exception as e:
-            print(f"[lyrics] Error opening LRCLib: {e}")
+            print(f"Error opening LRCLib: {e}")
             messagebox.showerror("Error", f"Could not open LRCLib:\n{e}")
     
     def search_lyrics_website(self, artist, title, source):
         """Search for lyrics on specified website."""
         # This will open the website with search parameters
         if source == "azlyrics":
-            # AZLyrics search URL format
-            search_query = f"{artist} {title}".replace(' ', '+').lower()
-            url = f"https://www.azlyrics.com/search?q={search_query}"
+            # AZLyrics search URL format - new format with proper search endpoint
+            search_query = f"{artist}+-+{title}".replace(' ', '+').lower()
+            # Use the new search format with the hash parameter
+            url = f"https://www.azlyrics.com/search/?q={search_query}&x=9cd5e9d2f84d9498c7bb93c29ca2769cb1a0ee25cd4ddb7a9b9e206570a75b70"
         elif source == "genius":
             # Genius search URL format
             search_query = f"{artist} {title}".replace(' ', '+')
@@ -4433,23 +4265,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         def save_lyrics():
             lyrics = lyrics_text.get("1.0", tk.END).strip()
             if lyrics:
-                # Debug: Check what artist and title values are
-                print(f"[debug] Artist: '{artist}', Title: '{title}'")
-                
                 # Create clean filename for save dialog
                 filename = f"{artist} - {title}.txt"
                 filename_clean = filename.replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
                 
-                print(f"[debug] Filename: '{filename_clean}'")
-                
                 # Determine default folder - use song's folder
                 if hasattr(self, 'current_song') and self.current_song:
-                    song_folder = Path(self.current_song).parent
-                    default_folder = song_folder
+                    default_folder = Path(self.current_song).parent
                 else:
-                    # Fallback to TinyTunez Lyrics if no current song
-                    tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-                    default_folder = tinytunez_folder / "plain_txt_lyrics"
+                    # No current song, use desktop as fallback
+                    default_folder = Path.home() / "Desktop"
                 
                 default_folder.mkdir(parents=True, exist_ok=True)
                 
@@ -4481,9 +4306,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     
                     self.update_lyrics_display(lyrics, artist, title)
                     window_lyrics_input.destroy()
-                    
-                    # Open the song folder after saving
-                    self.open_song_folder()
         
         def cancel_dialog():
             window_lyrics_input.destroy()
@@ -4657,7 +4479,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         self.lyrics_scrollbar.grid_remove()
                         
         except Exception as e:
-            print(f"[lyrics] Scrollbar visibility error: {e}")
+            print(f"Scrollbar visibility error: {e}")
             # Hide scrollbar on error
             self.lyrics_scrollbar.grid_remove()
     
@@ -4740,7 +4562,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         
                         self.lyrics_time_offset = avg_offset
                         self.offset_calibrated = True
-                        print(f"[calibration] Auto-calibrated timing offset: {self.lyrics_time_offset}ms (average from {len(self.calibration_data)} reliable data points)")
                         adjusted_time_ms = current_time_ms - self.lyrics_time_offset
                     elif expected_time >= 15000:
                         # If we're past 15 seconds without calibration, use the most recent reasonable offset
@@ -4749,11 +4570,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             last_offset = self.calibration_data[-1][2]
                             self.lyrics_time_offset = last_offset
                             self.offset_calibrated = True
-                            print(f"[calibration] Using fallback offset: {self.lyrics_time_offset}ms (from line {new_line_index + 1})")
                         else:
                             self.offset_calibrated = True
                             self.lyrics_time_offset = 0
-                            print(f"[calibration] No reliable calibration data, using offset: 0ms")
             
             # Apply initial startup compensation if not calibrated yet
             elif not hasattr(self, 'offset_calibrated') and current_time_ms > 1000:
@@ -4778,7 +4597,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.highlight_current_line()
             
         except Exception as e:
-            print(f"[lyrics] Error updating lyrics highlight: {e}")
+            print(f"Error updating lyrics highlight: {e}")
         
         # Schedule next update with more frequent checks for better accuracy
         if self.is_playing and not self.is_paused:
@@ -4832,7 +4651,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 
                 # Only log first few lines and when reaching threshold
                 if line_num <= 3 or line_num == scroll_threshold:
-                    print(f"[lyrics] Line {line_num} - natural progression (threshold at {scroll_threshold})")
+                    pass
             else:
                 # Current line has passed 2/3 threshold, scroll less frequently for fast songs
                 # Only scroll every 10 lines instead of every line to reduce scrolling movement
@@ -4846,21 +4665,18 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # Don't scroll if we're near the end
                     if scroll_to_line > total_lines - visible_lines:
                         self.lyrics_text.see(f"{line_num}.0")
-                        print(f"[lyrics] Line {line_num} - near end, basic visibility")
                     else:
                         # Scroll to position
                         scroll_fraction = scroll_to_line / max(1, total_lines - visible_lines)
                         self.lyrics_text.yview_moveto(scroll_fraction)
-                        print(f"[lyrics] Line {line_num} - scrolled to position {target_position}")
                 else:
                     # Don't scroll, just make current line visible
                     self.lyrics_text.see(f"{line_num}.0")
                     if line_num % 5 == 0:  # Log every 5th line for debugging
-                        print(f"[lyrics] Line {line_num} - no scroll (waiting for line 25)")
+                        pass
                     else:
                         # Fallback to see() if content is shorter than visible area
                         self.lyrics_text.see(f"{line_num}.0")
-                        print(f"[lyrics] Line {line_num} - using basic see (short content)")
             
             self.lyrics_text.config(state=tk.DISABLED)
             
@@ -4868,7 +4684,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             self.update_scrollbar_visibility()
             
         except Exception as e:
-            print(f"[lyrics] Highlight display error: {e}")
+            print(f"Highlight display error: {e}")
     
     def display_synced_lyrics(self, lyrics_text, source, artist=None, title=None):
         """Display synced lyrics with karaoke highlighting."""
@@ -4914,14 +4730,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Highlight first line immediately
             self.current_line_index = 0
             self.highlight_current_line()
-            
-            print(f"[lyrics] Started karaoke mode with {len(self.lyrics_lines)} lines")
         else:  # No timestamps, treat as plain text
             self.update_lyrics_display(f"Lyrics ({source}):\n\n{lyrics_text}")
             self.stop_karaoke_timer()
             self.lyrics_lines = []
             self.current_lyrics = ""
-            print(f"[lyrics] Displayed as plain text (no timestamps)")
     
     def play_selected_song_at_index(self, index):
         """Play the song at the specified index."""
@@ -4944,11 +4757,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             title = metadata['title']
             
             # Debug info for troubleshooting
-            print(f"[lyrics] SONG_PATH: {song_path}")
-            print(f"[lyrics] EXTRACTED: artist='{artist}', title='{title}'")
             
             # Loading lyrics display
-            print(f"[ui] Loading lyrics for: {artist} - {title}")
             self.update_lyrics_status("-- Searching...")
             
             # Try to load local lyrics first
@@ -4957,7 +4767,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Local lyrics result received
             if local_lyrics:
                 # Found local lyrics, displaying
-                print(f"[lyrics] Found local lyrics from {source}")
                 # Check if lyrics are synced (LRC format) or plain text
                 if source == "Local LRC":
                     self.display_synced_lyrics(local_lyrics, source, artist, title)
@@ -4971,7 +4780,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.update_star_cache(artist, title, has_lyrics=True)
                     self.update_star_for_song(artist, title, has_lyrics=True)
                 self.update_lyrics_status(f"-- Loaded ({source})")
-                print(f"[lyrics] Loaded local lyrics for {artist} - {title}")
                 return
             
             # No local lyrics found, searching APIs
@@ -4998,7 +4806,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # Caching and displaying lyrics
                     self.cache_lyrics(artist, title, lyrics, song_path)
                     self.update_lyrics_status(f"-- Loaded ({source})")
-                    print(f"[lyrics] Auto-fetched lyrics for {artist} - {title}")
                 else:
                     # Show fallback message
                     # No lyrics found from APIs
@@ -5026,7 +4833,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
         except Exception as e:
             # Error fetching lyrics
-            print(f"[lyrics] Error fetching lyrics: {e}")
             self.update_lyrics_display("Error loading lyrics")
             self.update_lyrics_status("-- Error")
         
@@ -5034,25 +4840,129 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def get_lyrics_from_api(self, artist, title, song_path=None):
         """Get lyrics from LrcLib and lyrics.ovh based on user preference."""
-        print(f"[lyrics] Searching lyrics for {artist} - {title}")
-        print(f"[lyrics] LrcLib available: {LRC_AVAILABLE}")
+        print(f"Searching lyrics for {artist} - {title}")
+        print(f"LrcLib available: {LRC_AVAILABLE}")
         
         # Get user preference
         preference = self.settings.get('lyrics_preference', 'synced_first')
-        print(f"[lyrics] API search with preference: {preference}")
         
         if preference == 'plain_only':
             # Search LrcLib for plain text only, skip synced lyrics
-            print("[lyrics] Plain text only preference - searching LrcLib for plain lyrics")
             if LRC_AVAILABLE:
                 try:
-                    print("[lyrics] Trying LrcLib API for plain text...")
                     api = lrclib.LrcLibAPI(user_agent="TinyTunes/1.0")
                     
                     # Get duration from file metadata if available, otherwise use default
                     duration = 180  # Default 3 minutes
                     try:
-                        # Try to get duration from the current song file
+                        # Try to get duration from the current song file first
+                        if song_path:
+                            audio_file = mutagen.File(song_path)
+                            if audio_file is not None and hasattr(audio_file, 'info'):
+                                duration = int(audio_file.info.length)
+                        else:
+                            # Fallback: search through playlist for matching file
+                            if self.playlist:
+                                music_folder = Path(self.playlist[0]).parent
+                                song_files = list(music_folder.rglob('*.mp3'))
+                                
+                                for song_file in song_files:
+                                    try:
+                                        audio_file = mutagen.File(song_file)
+                                        if audio_file is not None and hasattr(audio_file, 'info'):
+                                            # Check if this file matches our artist/title
+                                            file_artist = audio_file.get('artist', [''])[0] if hasattr(audio_file, 'get') else ""
+                                            file_title = audio_file.get('title', [''])[0] if hasattr(audio_file, 'get') else ""
+                                            
+                                            # Try exact match first
+                                            if file_artist == artist and file_title == title:
+                                                duration = int(audio_file.info.length)
+                                                break
+                                            # Try filename match as fallback
+                                            else:
+                                                filename = song_file.stem
+                                                expected_filename = f"{artist} - {title}"
+                                                if filename.replace('_', ' ') == expected_filename:
+                                                    duration = int(audio_file.info.length)
+                                                    break
+                                    except:
+                                        continue
+                    except:
+                        pass
+                    
+                    # Ensure duration is between 1-3600 seconds
+                    duration = min(max(duration, 1), 3600)
+                    
+                    print(f"Searching LRCLib for plain lyrics: {artist} - {title} (duration: {duration}s)")
+                    
+                    # Try multiple search variations for better results
+                    search_variations = [
+                        (title, artist),  # Original
+                        (title.split('(')[0].strip(), artist),  # Without parenthetical info
+                        (title.replace('(Phones Re-Edit)', '').strip(), artist),  # Specific case
+                        (title.replace('(Re-Edit)', '').strip(), artist),  # Generic re-edit
+                    ]
+                    
+                    for search_title, search_artist in search_variations:
+                        if search_title and search_artist:
+                            print(f"Trying plain lyrics search: {search_artist} - {search_title}")
+                            try:
+                                lyrics = api.get_lyrics(
+                                    track_name=search_title,
+                                    artist_name=search_artist,
+                                    album_name="",  # Empty string
+                                    duration=duration
+                                )
+                                
+                                if lyrics and lyrics.plain_lyrics:
+                                    print(f"Found plain lyrics with variation: {search_artist} - {search_title}")
+                                    break
+                            except Exception as e:
+                                print(f"Plain lyrics search failed for {search_artist} - {search_title}: {e}")
+                                continue
+                    else:
+                        # If all variations failed, try the original one last time
+                        print(f"Trying original plain lyrics search as fallback: {artist} - {title}")
+                        lyrics = api.get_lyrics(
+                            track_name=title,
+                            artist_name=artist,
+                            album_name="",  # Empty string
+                            duration=duration
+                        )
+                    
+                    # Validate the returned lyrics to ensure they match our song
+                    if lyrics and lyrics.plain_lyrics:
+                        return lyrics.plain_lyrics, "LrcLib"
+                    elif lyrics and lyrics.plain_lyrics:
+                        # Don't return invalid lyrics, continue to next source
+                        pass
+                        
+                except Exception as e:
+                    error_msg = str(e)
+                    if "404" in error_msg:
+                        pass
+                    else:
+                        print(f"LrcLib error: {e}")
+            
+            # Fallback disabled - using LrcLib only
+            return None, None
+        
+        # For 'synced_first' and 'synced_only', try LrcLib
+        if LRC_AVAILABLE:
+            try:
+                api = lrclib.LrcLibAPI(user_agent="TinyTunes/1.0")
+                
+                # Get duration from file metadata if available, otherwise use default
+                duration = 180  # Default 3 minutes
+                try:
+                    # Try to get duration from the current song file first
+                    if song_path:
+                        audio_file = mutagen.File(song_path)
+                        if audio_file is not None and hasattr(audio_file, 'info'):
+                            duration = int(audio_file.info.length)
+                    else:
+                        # Fallback: search through playlist for matching file
+                        # We need to find the file path for this artist/title combination
                         if self.playlist:
                             music_folder = Path(self.playlist[0]).parent
                             song_files = list(music_folder.rglob('*.mp3'))
@@ -5068,7 +4978,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                         # Try exact match first
                                         if file_artist == artist and file_title == title:
                                             duration = int(audio_file.info.length)
-                                            print(f"[lyrics] Found duration from file (exact match): {duration}s")
                                             break
                                         # Try filename match as fallback
                                         else:
@@ -5076,105 +4985,57 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                             expected_filename = f"{artist} - {title}"
                                             if filename.replace('_', ' ') == expected_filename:
                                                 duration = int(audio_file.info.length)
-                                                print(f"[lyrics] Found duration from file (filename match): {duration}s")
                                                 break
                                 except:
                                     continue
-                    except:
-                        pass
-                    
-                    # Ensure duration is between 1-3600 seconds
-                    duration = min(max(duration, 1), 3600)
-                    print(f"[lyrics] Using duration: {duration}s")
-                    
-                    # Simple call with artist, title, and valid duration
+                except:
+                    pass
+                
+                # Ensure duration is between 1-3600 seconds
+                duration = min(max(duration, 1), 3600)
+                
+                print(f"Searching LRCLib for: {artist} - {title} (duration: {duration}s)")
+                
+                # Try multiple search variations for better results
+                search_variations = [
+                    (title, artist),  # Original
+                    (title.split('(')[0].strip(), artist),  # Without parenthetical info
+                    (title.replace('(Phones Re-Edit)', '').strip(), artist),  # Specific case
+                    (title.replace('(Re-Edit)', '').strip(), artist),  # Generic re-edit
+                ]
+                
+                for search_title, search_artist in search_variations:
+                    if search_title and search_artist:
+                        print(f"Trying search: {search_artist} - {search_title}")
+                        try:
+                            lyrics = api.get_lyrics(
+                                track_name=search_title,
+                                artist_name=search_artist,
+                                album_name="",  # Empty string
+                                duration=duration
+                            )
+                            
+                            if lyrics and (lyrics.synced_lyrics or lyrics.plain_lyrics):
+                                print(f"Found lyrics with variation: {search_artist} - {search_title}")
+                                break
+                        except Exception as e:
+                            print(f"Search failed for {search_artist} - {search_title}: {e}")
+                            continue
+                else:
+                    # If all variations failed, try the original one last time
+                    print(f"Trying original search as fallback: {artist} - {title}")
                     lyrics = api.get_lyrics(
                         track_name=title,
                         artist_name=artist,
                         album_name="",  # Empty string
                         duration=duration
                     )
-                    
-                    # Validate the returned lyrics to ensure they match our song
-                    if lyrics and lyrics.plain_lyrics:
-                        print(f"[lyrics] Found plain lyrics from LrcLib")
-                        return lyrics.plain_lyrics, "LrcLib"
-                    elif lyrics and lyrics.plain_lyrics:
-                        print(f"[lyrics] LrcLib returned plain lyrics but validation failed - likely incorrect match")
-                        # Don't return invalid lyrics, continue to next source
-                        
-                except Exception as e:
-                    error_msg = str(e)
-                    if "404" in error_msg:
-                        print(f"[lyrics] No lyrics found on LrcLib for: {artist} - {title}")
-                    else:
-                        print(f"[lyrics] LrcLib error: {e}")
-            
-            # Fallback disabled - using LrcLib only
-            print("[lyrics] No lyrics found from LrcLib")
-            return None, None
-        
-        # For 'synced_first' and 'synced_only', try LrcLib
-        if LRC_AVAILABLE:
-            try:
-                print("[lyrics] Trying LrcLib API...")
-                api = lrclib.LrcLibAPI(user_agent="TinyTunes/1.0")
-                
-                # Get duration from file metadata if available, otherwise use default
-                duration = 180  # Default 3 minutes
-                try:
-                    # Try to get duration from the current song file
-                    # We need to find the file path for this artist/title combination
-                    if self.playlist:
-                        music_folder = Path(self.playlist[0]).parent
-                        song_files = list(music_folder.rglob('*.mp3'))
-                        
-                        for song_file in song_files:
-                            try:
-                                audio_file = mutagen.File(song_file)
-                                if audio_file is not None and hasattr(audio_file, 'info'):
-                                    # Check if this file matches our artist/title
-                                    file_artist = audio_file.get('artist', [''])[0] if hasattr(audio_file, 'get') else ""
-                                    file_title = audio_file.get('title', [''])[0] if hasattr(audio_file, 'get') else ""
-                                    
-                                    # Try exact match first
-                                    if file_artist == artist and file_title == title:
-                                        duration = int(audio_file.info.length)
-                                        print(f"[lyrics] Found duration from file (exact match): {duration}s")
-                                        break
-                                    # Try filename match as fallback
-                                    else:
-                                        filename = song_file.stem
-                                        expected_filename = f"{artist} - {title}"
-                                        if filename.replace('_', ' ') == expected_filename:
-                                            duration = int(audio_file.info.length)
-                                            print(f"[lyrics] Found duration from file (filename match): {duration}s")
-                                            break
-                            except:
-                                continue
-                except:
-                    pass
-                
-                # Ensure duration is between 1-3600 seconds
-                duration = min(max(duration, 1), 3600)
-                print(f"[lyrics] Using duration: {duration}s")
-                
-                # Simple call with artist, title, and valid duration
-                lyrics = api.get_lyrics(
-                    track_name=title,
-                    artist_name=artist,
-                    album_name="",  # Empty string
-                    duration=duration
-                )
-                
-                print(f"[lyrics] LrcLib result type: {type(lyrics)}")
                 
                 if lyrics and (lyrics.synced_lyrics or lyrics.plain_lyrics):
                     # Return lyrics without validation
                     # Priority 1: Synced lyrics from LrcLib (for synced_first and synced_only)
                     if lyrics.synced_lyrics:
                         result_lyrics = lyrics.synced_lyrics
-                        print(f"[lyrics] Found SYNCED lyrics via LrcLib: {len(result_lyrics)} chars")
                         
                         # Cache the result like old version
                         self.cache_lyrics(artist, title, result_lyrics, song_path)
@@ -5186,7 +5047,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # Priority 2: Plain lyrics from LrcLib (only if preference allows)
                     elif lyrics.plain_lyrics and preference != 'synced_only':
                         result_lyrics = lyrics.plain_lyrics
-                        print(f"[lyrics] Found PLAIN lyrics via LrcLib: {len(result_lyrics)} chars")
                         
                         # Return lyrics without validation
                         self.cache_lyrics(artist, title, result_lyrics, song_path)
@@ -5196,21 +5056,20 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         self.stop_karaoke_timer()  # Stop karaoke for plain text
                         return True, "LrcLib (plain)"
                     elif lyrics.plain_lyrics and preference == 'synced_only':
-                        print("[lyrics] LrcLib has plain lyrics, but preference is synced_only")
+                        pass
                     else:
-                        print("[lyrics] LrcLib result has no lyrics content")
+                        pass
                 else:
-                    print("[lyrics] No lyrics found in LrcLib result")
+                    pass
                     
             except Exception as e:
                 error_msg = str(e)
                 if "404" in error_msg:
-                    print(f"[lyrics] No lyrics found on LrcLib for: {artist} - {title}")
+                    pass
                 else:
-                    print(f"[lyrics] LrcLib error: {e}")
+                    print(f"LrcLib error: {e}")
         
         # Fallback disabled - using LrcLib only
-        print("[lyrics] No lyrics found from LrcLib")
         return None, None
     
     def cache_lyrics(self, artist, title, lyrics, song_path=None):
@@ -5218,76 +5077,28 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             # Ensure lyrics is a string, not a boolean or None
             if not isinstance(lyrics, str):
-                print(f"[lyrics] Invalid lyrics type: {type(lyrics)}, expected string")
                 return
             
             # Check if lyrics are synced (have timestamps) or plain text
             is_synced = self.is_synced_lyrics(lyrics)
-            storage = self.settings.get('lyrics_storage', 'centralized')
             
             # Create clean filename for file system
             filename_clean = f"{artist} - {title}".replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
             
-            if storage == 'album_folders' and song_path:
-                # Store in album folder
+            # Store in album folder
+            if song_path:
                 album_path = Path(self.get_album_lyrics_path(song_path))
                 if album_path:
                     if is_synced:
                         cache_file = album_path / f"{filename_clean}.lrc"
-                        print(f"[lyrics] Cached synced lyrics to album folder: {cache_file}")
                     else:
                         cache_file = album_path / f"{filename_clean}.txt"
-                        print(f"[lyrics] Cached plain text lyrics to album folder: {cache_file}")
                     
                     cache_file.write_text(lyrics, encoding='utf-8')
-                    
-            elif storage == 'hybrid':
-                # Try album folder first, fallback to centralized
-                cached = False
-                
-                if song_path:
-                    album_path = Path(self.get_album_lyrics_path(song_path))
-                    if album_path:
-                        if is_synced:
-                            cache_file = album_path / f"{filename_clean}.lrc"
-                            print(f"[lyrics] Cached synced lyrics to album folder (hybrid): {cache_file}")
-                        else:
-                            cache_file = album_path / f"{filename_clean}.txt"
-                            print(f"[lyrics] Cached plain text lyrics to album folder (hybrid): {cache_file}")
-                        
-                        cache_file.write_text(lyrics, encoding='utf-8')
-                        cached = True
-                
-                if not cached:
-                    # Fallback to centralized
-                    tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-                    if is_synced:
-                        cache_dir = tinytunez_folder / "synced_lyrics"
-                        cache_file = cache_dir / f"{filename_clean}.lrc"
-                        print(f"[lyrics] Cached synced lyrics to centralized (hybrid fallback): {cache_file}")
-                    else:
-                        cache_dir = tinytunez_folder / "plain_txt_lyrics"
-                        cache_file = cache_dir / f"{filename_clean}.txt"
-                        print(f"[lyrics] Cached plain text lyrics to centralized (hybrid fallback): {cache_file}")
-                    
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-                    cache_file.write_text(lyrics, encoding='utf-8')
-            
-            else:  # 'centralized'
-                # Store in centralized folder (original behavior)
-                tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-                
-                if is_synced:
-                    cache_dir = tinytunez_folder / "synced_lyrics"
-                    cache_file = cache_dir / f"{filename_clean}.lrc"
-                    print(f"[lyrics] Cached synced lyrics to centralized: {cache_file}")
                 else:
-                    cache_dir = tinytunez_folder / "plain_txt_lyrics"
-                    cache_file = cache_dir / f"{filename_clean}.txt"
-                    print(f"[lyrics] Cached plain text lyrics to centralized: {cache_file}")
-                
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(lyrics, encoding='utf-8')
+                    pass
+            else:
+                pass
             
             # Update star for this song
             self.update_star_for_song(artist, title, has_lyrics=True)
@@ -5295,7 +5106,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             self.update_star_cache(artist, title, has_lyrics=True)
             
         except Exception as e:
-            print(f"[lyrics] Cache error: {e}")
+            print(f"Cache error: {e}")
     
     def is_synced_lyrics(self, lyrics):
         """Check if lyrics contain timestamps (LRC format)."""
@@ -5309,51 +5120,25 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         timestamp_pattern = r'\[\d{2}:\d{2}(?:\.\d{2})?\]'
         return bool(re.search(timestamp_pattern, lyrics))
     
-    def save_plain_txt_lyrics(self, artist, title, lyrics):
-        """Save manual lyrics as individual files in plain_txt_lyrics/ folder."""
+    def save_plain_txt_lyrics(self, artist, title, lyrics, song_path=None):
+        """Save manual lyrics as individual files in the song's album folder."""
         import os
         import json
         from pathlib import Path
-        
-        # Use the new lyrics folder system with TinyTunez Lyrics subfolder
-        tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-        manual_dir = tinytunez_folder / "plain_txt_lyrics"  # Plain text lyrics go here
-        manual_dir.mkdir(parents=True, exist_ok=True)
         
         # Create clean filename
         filename = f"{artist} - {title}"
         filename_clean = filename.replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
         
-        # Save lyrics file as individual .txt file
-        lyrics_file = manual_dir / f"{filename_clean}.txt"
-        lyrics_file.write_text(lyrics, encoding='utf-8')
+        # Save lyrics file in the song's album folder
+        if song_path:
+            album_path = Path(self.get_album_lyrics_path(song_path))
+            if album_path:
+                lyrics_file = album_path / f"{filename_clean}.txt"
+                lyrics_file.write_text(lyrics, encoding='utf-8')
+                return str(lyrics_file)
         
-        # Update index
-        index_file = manual_dir / "index.json"
-        try:
-            if index_file.exists():
-                index = json.loads(index_file.read_text(encoding='utf-8'))
-            else:
-                index = {}
-        except:
-            index = {}
-        
-        index[filename_clean] = {
-            'artist': artist,
-            'title': title,
-            'filename': f"{filename_clean}.txt",
-            'source': 'manual',
-            'created_at': str(Path.cwd())  # Simple timestamp
-        }
-        
-        # Save index
-        index_file.write_text(json.dumps(index, indent=2), encoding='utf-8')
-        print(f"[lyrics] Saved manual lyrics: {artist} - {title}")
-        
-        # Update star for this song
-        self.update_star_for_song(artist, title, has_lyrics=True)
-        # Update star cache
-        self.update_star_cache(artist, title, has_lyrics=True)
+        return None
     
     def get_album_lyrics_path(self, song_path):
         """Get the album folder path for storing lyrics next to the song file."""
@@ -5364,15 +5149,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             return None
     
     def get_lyrics_storage_paths(self, artist, title, song_path=None):
-        """Get all possible lyrics storage paths based on user preference."""
-        storage = self.settings.get('lyrics_storage', 'centralized')
+        """Get all possible lyrics storage paths - album folders only."""
         paths = []
         
         # Create clean filename for file system
         filename_clean = f"{artist} - {title}".replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
         
-        if storage == 'album_folders' and song_path:
-            # Only check album folders
+        # Only check album folders
+        if song_path:
             album_path = self.get_album_lyrics_path(song_path)
             if album_path:
                 paths.append({
@@ -5380,34 +5164,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     'txt': Path(album_path) / f"{filename_clean}.txt",
                     'type': 'album'
                 })
-        
-        elif storage == 'hybrid':
-            # Check album folders first, then centralized
-            if song_path:
-                album_path = self.get_album_lyrics_path(song_path)
-                if album_path:
-                    paths.append({
-                        'lrc': Path(album_path) / f"{filename_clean}.lrc",
-                        'txt': Path(album_path) / f"{filename_clean}.txt",
-                        'type': 'album'
-                    })
-            
-            # Add centralized as fallback
-            tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-            paths.append({
-                'lrc': tinytunez_folder / "synced_lyrics" / f"{filename_clean}.lrc",
-                'txt': tinytunez_folder / "plain_txt_lyrics" / f"{filename_clean}.txt",
-                'type': 'centralized'
-            })
-        
-        else:  # 'centralized'
-            # Only check centralized
-            tinytunez_folder = Path(self.get_tinytunez_lyrics_folder())
-            paths.append({
-                'lrc': tinytunez_folder / "synced_lyrics" / f"{filename_clean}.lrc",
-                'txt': tinytunez_folder / "plain_txt_lyrics" / f"{filename_clean}.txt",
-                'type': 'centralized'
-            })
         
         return paths
     
@@ -5418,8 +5174,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         # Get user preference
         preference = self.settings.get('lyrics_preference', 'synced_first')
-        storage = self.settings.get('lyrics_storage', 'centralized')
-        print(f"[lyrics] Loading lyrics with preference: {preference}, storage: {storage}")
         
         # Get all possible storage paths
         paths = self.get_lyrics_storage_paths(artist, title, song_path)
@@ -5430,10 +5184,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 lrc_file = path_set['lrc']
                 if lrc_file.exists():
                     content = lrc_file.read_text(encoding='utf-8')
-                    print(f"[lyrics] Loaded local LRC lyrics from {path_set['type']}: {lrc_file.name}")
                     return content, "Local LRC"
             
-            print(f"[lyrics] No synced lyrics found for: {artist} - {title}")
             return None, None
                 
         elif preference == 'plain_only':
@@ -5442,10 +5194,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 txt_file = path_set['txt']
                 if txt_file.exists():
                     content = txt_file.read_text(encoding='utf-8')
-                    print(f"[lyrics] Loaded local TXT lyrics from {path_set['type']}: {txt_file.name}")
                     return content, "Local TXT"
             
-            print(f"[lyrics] No plain text lyrics found for: {artist} - {title}")
             return None, None
                 
         else:  # 'synced_first' (default)
@@ -5454,7 +5204,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 lrc_file = path_set['lrc']
                 if lrc_file.exists():
                     content = lrc_file.read_text(encoding='utf-8')
-                    print(f"[lyrics] Loaded local LRC lyrics from {path_set['type']}: {lrc_file.name}")
                     return content, "Local LRC"
             
             # Fallback to plain text
@@ -5462,10 +5211,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 txt_file = path_set['txt']
                 if txt_file.exists():
                     content = txt_file.read_text(encoding='utf-8')
-                    print(f"[lyrics] Loaded local TXT lyrics from {path_set['type']}: {txt_file.name}")
                     return content, "Local TXT"
                 
-        print(f"[lyrics] No local lyrics found for: {artist} - {title}")
         return None, None
     
     def play_selected_song(self):
@@ -5551,40 +5298,57 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Load and play the song using mpv or pygame mixer fallback
             try:
-                # Stop any currently playing song
-                if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
-                    try:
-                        self.player.stop()
-                    except:
-                        pass
-                else:
-                    # Pygame mixer fallback
-                    try:
-                        pygame.mixer.music.stop()
-                    except:
-                        pass
+                # Increment usage counter and check if reinitialization is needed
+                self.player_usage_count += 1
+                if self.player_usage_count >= self.max_player_uses:
+                    print(f"Player usage count reached {self.player_usage_count}, reinitializing...")
+                    self.reinitialize_player()
+                    self.player_usage_count = 0  # Reset counter after reinitialization
+                
+                # Stop any currently playing song and clean up resources
+                self.cleanup_player_resources()
                 
                 # Load and play the song
                 if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
                     # Use MPV for real seeking
-                    print(f"Loading with MPV: {self.current_song}")
                     self.player.play(self.current_song)
                     self.player.volume = int(self.volume * 100)
-                    print(f"Playing with MPV: {os.path.basename(self.current_song)}")
-                    print(f"MPV volume set to: {int(self.volume * 100)}")
                     
-                    # Check if MPV is actually playing
+                    # Check if MPV is actually playing and reinitialize if needed
                     def check_mpv_status():
                         try:
                             if hasattr(self.player, 'time_pos'):
                                 pos = self.player.time_pos
-                                print(f"MPV position: {pos}")
                                 if pos is not None and pos > 0:
-                                    print("MPV is playing successfully")
+                                    pass  # MPV is playing successfully
                                 else:
-                                    print("MPV position is 0 or None - might not be playing")
+                                    # MPV position is 0 or None - might not be playing
+                                    if not self.is_paused and self.is_playing:
+                                        # Try to restart once
+                                        try:
+                                            self.player.play(self.current_song)
+                                        except:
+                                            # If restart fails, reinitialize player
+                                            print("MPV restart failed, reinitializing player...")
+                                            self.reinitialize_player()
+                                            # Try playing again with new player
+                                            if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                                                try:
+                                                    self.player.play(self.current_song)
+                                                    self.player.volume = int(self.volume * 100)
+                                                except:
+                                                    pass
                         except Exception as e:
                             print(f"Error checking MPV status: {e}")
+                            # If status check fails, reinitialize player
+                            if not self.is_paused and self.is_playing:
+                                self.reinitialize_player()
+                                if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                                    try:
+                                        self.player.play(self.current_song)
+                                        self.player.volume = int(self.volume * 100)
+                                    except:
+                                        pass
                     
                     # Check status after a short delay
                     self.root.after(1000, check_mpv_status)
@@ -5594,7 +5358,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     pygame.mixer.music.load(self.current_song)
                     pygame.mixer.music.play()
                     pygame.mixer.music.set_volume(self.volume)
-                    print(f"Playing with pygame mixer: {os.path.basename(self.current_song)}")
                 
                 # Set playing state BEFORE starting analysis
                 self.is_playing = True
@@ -5619,7 +5382,88 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 print(f"Error playing song: {e}")
                 self.is_playing = False
                 self.is_paused = False
+                # Try to cleanup on error
+                self.cleanup_player_resources()
             
+    def reinitialize_player(self):
+        """Reinitialize the MPV player if it gets into a bad state"""
+        try:
+            # Cleanup existing player
+            if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                try:
+                    self.player.stop()
+                    del self.player
+                except:
+                    pass
+            
+            # Reinitialize MPV if available
+            if MPV_AVAILABLE and mpv:
+                try:
+                    # Initialize MPV with better Windows audio settings
+                    self.player = mpv.MPV(
+                        ytdl=False, 
+                        vo='null',  # No video output
+                        ao='wasapi'  # Windows Audio Session API
+                    )
+                    self.player.volume = int(self.volume * 100) if hasattr(self, 'volume') else 70
+                    
+                    # Set some additional options for better playback
+                    self.player.keep_open = 'no'  # Don't keep open when finished
+                    self.player.loop = 'no'  # Don't loop by default
+                    
+                    self.use_pygame_fallback = False
+                    print("MPV player reinitialized successfully")
+                except Exception as e:
+                    print(f"Failed to reinitialize MPV: {e}")
+                    self.use_pygame_fallback = True
+            else:
+                self.use_pygame_fallback = True
+                
+        except Exception as e:
+            print(f"Error reinitializing player: {e}")
+            self.use_pygame_fallback = True
+    
+    def stop_time_tracking(self):
+        """Stop the time tracking timer"""
+        if hasattr(self, 'time_update_job') and self.time_update_job:
+            self.root.after_cancel(self.time_update_job)
+            self.time_update_job = None
+    
+    def cleanup_player_resources(self):
+        """Clean up player resources to prevent memory leaks and state issues"""
+        try:
+            # Stop all timers and threads first
+            self.stop_karaoke_timer()
+            self.stop_audio_analysis()
+            self.stop_time_tracking()
+            # Don't stop scrolling here - it should continue for the new song
+            
+            # Stop and cleanup MPV player
+            if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                try:
+                    self.player.stop()
+                    # Give MPV a moment to cleanup
+                    self.root.after(100, lambda: None)
+                except:
+                    pass
+            else:
+                # Stop pygame mixer
+                try:
+                    import pygame.mixer
+                    pygame.mixer.music.stop()
+                except:
+                    pass
+            
+            # Clear audio data
+            if hasattr(self, 'audio_data'):
+                self.audio_data.clear()
+                
+            # Reset visualization state
+            self.visualization_running = False
+            
+        except Exception as e:
+            pass  # Silently handle cleanup errors
+    
     def play_song(self):
         # PRIORITY 1: Resume from pause if we're paused - this should be checked BEFORE treeview selection
         if self.is_paused:
@@ -5741,7 +5585,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Fallback to treeview index (less reliable)
                 treeview_index = self.playlist_treeview.index(item)
                 if treeview_index != self.current_index:
-                    print(f"[play_button] Fallback: changing index from {self.current_index} to {treeview_index}")
                     self.current_index = treeview_index
                     
                     # Update current song when getting from selection
@@ -5755,7 +5598,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.play_selected_song()
                     self.auto_play_enabled = False  # Disable again after playing
                 else:
-                    print(f"[play_button] Fallback: same song selected, not changing")
+                    pass
             
     def pause_song(self):
         if self.is_playing and not self.is_paused:
@@ -5771,36 +5614,39 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.stop_karaoke_timer()
                 # Stop audio analysis to prevent jittering
                 self.stop_audio_analysis()
+                # Stop time tracking to prevent updates while paused
+                self.stop_time_tracking()
                 # Clear audio data to freeze visualization
-                self.audio_data = []
-            except:
-                pass
+                if hasattr(self, 'audio_data'):
+                    self.audio_data.clear()
+            except Exception as e:
+                print(f"Error pausing song: {e}")
+                # If pause fails, try to stop and cleanup
+                self.cleanup_player_resources()
+                self.is_playing = False
+                self.is_paused = False
     
     def stop_song(self):
         if self.is_playing:
-            # Stop playback
-            try:
-                if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', False):
-                    self.player.stop()
-                else:
-                    import pygame.mixer
-                    pygame.mixer.music.stop()
-            except:
-                pass
+            # Increment usage counter and check if reinitialization is needed
+            self.player_usage_count += 1
+            if self.player_usage_count >= self.max_player_uses:
+                print(f"Player usage count reached {self.player_usage_count}, reinitializing...")
+                self.reinitialize_player()
+                self.player_usage_count = 0  # Reset counter after reinitialization
+            
+            # Use the new cleanup method for consistent resource management
+            self.cleanup_player_resources()
+            
+            # Set state flags
             self.is_playing = False
-            # Stop karaoke timer when stopped
-            self.stop_karaoke_timer()
             self.is_paused = False
             self.current_time = 0
             self.update_time_display()
-            # Stop audio analysis completely
-            self.stop_audio_analysis()
-            # Clear audio data to stop visualization
-            self.audio_data = []
-            # Stop visualization
-            self.visualization_running = False
-            # Stop scrolling
+            
+            # Stop scrolling when song stops
             self.stop_scrolling()
+            
             # Keep song info but update status to show it's stopped
             if self.current_song:
                 # Use the current metadata instead of filename
@@ -5826,11 +5672,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
             # Clear visualization
             self.visualization_canvas.delete("all")
+            # Clean up visualization items to prevent memory leaks
+            if hasattr(self, 'viz_bars'):
+                self.viz_bars.clear()
+            if hasattr(self, 'viz_peaks'):
+                self.viz_peaks.clear()
         
             # Reset progress bar
             self.progress_fill.config(width=0)
-        # Reset progress bar
-        self.progress_fill.config(width=0)
         
         self.lyrics_text.config(state=tk.NORMAL)
         self.lyrics_text.delete(1.0, tk.END)
@@ -5840,10 +5689,21 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Don't allow song changes during seeking
         if getattr(self, 'seek_pending', False):
             return
-            
-        if self.current_index > 0:
-            self.current_index -= 1
-            self.play_selected_song()
+        
+        if self.is_shuffle and self.shuffle_history:
+            # In shuffle mode, go to previous song in shuffle history
+            if self.shuffle_history_index > 0:
+                self.shuffle_history_index -= 1
+                self.current_index = self.shuffle_history[self.shuffle_history_index]
+                self.play_selected_song()
+            elif self.shuffle_history_index == 0:
+                # If we're at the first song in history, just replay it
+                self.play_selected_song()
+        else:
+            # Normal mode - go to previous song in playlist
+            if self.current_index > 0:
+                self.current_index -= 1
+                self.play_selected_song()
             
     def next_song(self):
         # Don't allow song changes during seeking
@@ -5854,6 +5714,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Random song in shuffle mode
             import random
             self.current_index = random.randint(0, len(self.playlist) - 1)
+            
+            # Add to shuffle history
+            self.shuffle_history.append(self.current_index)
+            self.shuffle_history_index = len(self.shuffle_history) - 1
+            
+            # Limit history size to prevent memory issues
+            if len(self.shuffle_history) > 100:
+                self.shuffle_history.pop(0)
+                self.shuffle_history_index -= 1
+            
             self.play_selected_song()
         elif self.current_index < len(self.playlist) - 1:
             # Next song in normal mode
@@ -5863,6 +5733,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     def toggle_shuffle(self):
         """Toggle shuffle mode on/off"""
         self.is_shuffle = not self.is_shuffle
+        
+        # Clear shuffle history when turning off shuffle
+        if not self.is_shuffle:
+            self.shuffle_history = []
+            self.shuffle_history_index = -1
         
         # Save shuffle state to file
         self.save_shuffle_state()
@@ -6214,17 +6089,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         if not self.visualization_running:
             return
         
-        # Debug: Check if visualization is being called
-        if not hasattr(self, 'viz_frame_counter'):
-            self.viz_frame_counter = 0
-        self.viz_frame_counter += 1
-        
         # Check if visualization canvas exists
         if not hasattr(self, 'visualization_canvas'):
             return
-        
-        # Clear canvas for redrawing
-        self.visualization_canvas.delete("all")
         
         # Get canvas dimensions
         width = self.visualization_canvas.winfo_width()
@@ -6239,10 +6106,45 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         bar_spacing = 1
         bar_width = max(1, (width - (num_bars + 1) * bar_spacing) // num_bars)
         
-        # Initialize peak holders
+        # Initialize peak holders and canvas items
         if not hasattr(self, 'bar_peaks'):
             self.bar_peaks = [0] * num_bars
         if not hasattr(self, 'bar_levels'):
+            self.bar_levels = [0] * num_bars
+        if not hasattr(self, 'viz_bars') or len(self.viz_bars) != num_bars:
+            # Clear existing items if they exist
+            if hasattr(self, 'viz_bars'):
+                for bar in self.viz_bars:
+                    self.visualization_canvas.delete(bar)
+                self.viz_bars.clear()
+            if hasattr(self, 'viz_peaks'):
+                for peak in self.viz_peaks:
+                    self.visualization_canvas.delete(peak)
+                self.viz_peaks.clear()
+            
+            # Create canvas items once and reuse them
+            self.viz_bars = []
+            self.viz_peaks = []
+            for i in range(num_bars):
+                x1 = i * (bar_width + bar_spacing) + bar_spacing
+                x2 = x1 + bar_width
+                # Create bar item (will be updated with coords)
+                bar = self.visualization_canvas.create_rectangle(
+                    x1, height, x2, height,
+                    fill="#00ff00", outline=""
+                )
+                self.viz_bars.append(bar)
+                # Create peak item
+                peak = self.visualization_canvas.create_rectangle(
+                    x1, height, x2, height,
+                    fill="#ffff00", outline=""
+                )
+                self.viz_peaks.append(peak)
+        
+        # Ensure arrays have correct size
+        if len(self.bar_peaks) != num_bars:
+            self.bar_peaks = [0] * num_bars
+        if len(self.bar_levels) != num_bars:
             self.bar_levels = [0] * num_bars
         
         # Use real audio data if available, otherwise show placeholder animation
@@ -6275,40 +6177,52 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 else:
                     self.bar_peaks[i] = max(0, self.bar_peaks[i] - height * 0.01)  # Very slow decay
         
-        # Draw bars for both real audio and simulation
-        for i in range(num_bars):
+        # Update existing canvas items instead of recreating them
+        for i in range(min(num_bars, len(self.viz_bars), len(self.viz_peaks))):
             # Calculate positions
             x1 = i * (bar_width + bar_spacing) + bar_spacing
             x2 = x1 + bar_width
             
-            # Draw main bar with gradient - ALWAYS start from bottom
+            # Update main bar
             bar_height = int(self.bar_levels[i])
             if bar_height > 0:
-                # Draw from bottom up
-                for j in range(bar_height):
-                    # Color gradient from bright green to dark green
-                    intensity = 1.0 - (j / bar_height) * 0.7
-                    green_val = int(255 * intensity)
-                    color = f"#00{green_val:02x}00"
-                    
-                    self.visualization_canvas.create_rectangle(
-                        x1, height - j, x2, height - j - 1,
-                        fill=color,
-                        outline=""
-                    )
+                # Update bar coordinates and color
+                self.visualization_canvas.coords(
+                    self.viz_bars[i],
+                    x1, height - bar_height, x2, height
+                )
+                # Simple green color (no gradient for performance)
+                intensity = min(1.0, bar_height / (height * 0.8))
+                green_val = int(100 + 155 * intensity)  # Range from dark to bright green
+                color = f"#00{green_val:02x}00"
+                self.visualization_canvas.itemconfig(self.viz_bars[i], fill=color)
+            else:
+                # Hide bar if no height
+                self.visualization_canvas.coords(
+                    self.viz_bars[i],
+                    x1, height, x2, height
+                )
+                self.visualization_canvas.itemconfig(self.viz_bars[i], fill="#003300")
             
-            # Draw peak indicator (classic Winamp style)
+            # Update peak indicator
             if self.bar_peaks[i] > 2:
                 peak_y = height - int(self.bar_peaks[i])
-                self.visualization_canvas.create_rectangle(
-                    x1, peak_y, x2, peak_y + 1,
-                    fill="#ffff00",  # Yellow peak
-                    outline=""
+                self.visualization_canvas.coords(
+                    self.viz_peaks[i],
+                    x1, peak_y, x2, peak_y + 1
                 )
+                self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#ffff00")
+            else:
+                # Hide peak if too small
+                self.visualization_canvas.coords(
+                    self.viz_peaks[i],
+                    x1, height, x2, height
+                )
+                self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#000000")
         
-        # Update at reasonable speed for performance
+        # Update at reasonable speed for performance (reduced from 30 to 20 FPS)
         if self.visualization_running:
-            self.root.after(33, self.animate_visualization)  # 30 FPS for better performance
+            self.root.after(50, self.animate_visualization)  # 20 FPS for better performance
     
     def toggle_mute(self):
         if self.is_muted:
@@ -6459,7 +6373,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             self.apply_peach_edit_lyrics_dialog(widget)
                         else:
                             self.restore_dark_edit_lyrics_dialog(widget)
-                        print(f"[debug] Updated Edit Lyrics dialog theme to {self.current_theme}")
         except Exception as e:
             print(f"Error updating Edit Lyrics dialogs theme: {e}")
     
@@ -6543,7 +6456,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Restore dark theme to all widgets in the dialog
             self.restore_dark_edit_lyrics_children(dialog)
-            print(f"[debug] Edit Lyrics dialog restored to dark theme")
             
         except Exception as e:
             print(f"Error restoring dark theme to Edit Lyrics dialog: {e}")
@@ -6811,16 +6723,13 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 file_ext = ".lrc" if is_synced else ".txt"
                 default_filename = f"{self.current_lyrics_artist} - {self.current_lyrics_title}{file_ext}"
                 
-                # Determine default folder - use song's folder instead of TinyTunez Lyrics
+                # Determine default folder - use song's folder
                 if hasattr(self, 'current_song') and self.current_song:
                     song_folder = Path(self.current_song).parent
                     default_folder = song_folder
                 else:
-                    # Fallback to TinyTunez Lyrics if no current song
-                    if is_synced:
-                        default_folder = Path(self.get_tinytunez_lyrics_folder()) / "synced_lyrics"
-                    else:
-                        default_folder = Path(self.get_tinytunez_lyrics_folder()) / "plain_txt_lyrics"
+                    # No current song, use desktop as fallback
+                    default_folder = Path.home() / "Desktop"
                 
                 default_folder.mkdir(parents=True, exist_ok=True)
                 
@@ -6866,9 +6775,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     dialog.destroy()
                     # Maintain peach scrollbars when dialog closes
                     self.root.after(50, self.maintain_peach_scrollbars)
-                    
-                    # Open the song folder after saving
-                    self.open_song_folder()
             else:
                 messagebox.showwarning("Empty Lyrics", "Lyrics cannot be empty!")
         
@@ -7606,7 +7512,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 
                 elif widget_class == 'Scale':
                     try:
-                        print(f"[debug] Found Scale widget, applying peach theme")
                         widget.configure(
                             bg=theme['scale_bg'], 
                             troughcolor=theme['scale_trough'], 
@@ -7615,7 +7520,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             highlightbackground=theme['scale_border'],
                             highlightcolor=theme['scale_border']
                         )
-                        print(f"[debug] Scale widget styled with peach colors")
                     except tk.TclError:
                         pass
                 
@@ -7654,14 +7558,12 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             header_frame = self.find_widget_by_name(self.root, 'header_frame')
             if header_frame:
-                print(f"[debug] Found header_frame, restoring dark theme")
                 header_frame.configure(bg='#0d1117')  # Original dark background from create_widgets
-                print(f"[debug] Header frame restored to dark theme")
                 
                 # Restore dark theme to all children in the header frame
                 self.restore_dark_header_children(header_frame)
             else:
-                print(f"[debug] Header frame not found for dark restoration")
+                pass
         except Exception as e:
             print(f"Error restoring dark header frame: {e}")
     
@@ -7672,8 +7574,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 widget_name = getattr(widget, '_name', '')
                 widget_class = widget.winfo_class()
                 
-                print(f"[debug] Processing header widget for restoration: {widget_name} (class: {widget_class})")
-                
                 # Frame children - restore original dark background
                 if widget_class == 'Frame':
                     widget.configure(bg='#0d1117')  # Original dark background
@@ -7683,13 +7583,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 elif widget_class == 'Label':
                     if widget_name == 'app_title_label':
                         widget.configure(bg='#0d1117', fg='#4a9eff')  # Exact original from create_widgets line 530-531
-                        print(f"[debug] App title label restored to original dark theme")
                     elif widget_name == 'app_subtitle_label':
                         widget.configure(bg='#0d1117', fg='#8b949e')  # Exact original from create_widgets line 540-541
-                        print(f"[debug] App subtitle label restored to original dark theme")
                     elif widget_name == 'header_icon_label':
                         widget.configure(bg='#0d1117', fg='#4a9eff')  # Exact original from create_widgets line 523
-                        print(f"[debug] Header icon label restored to original dark theme")
                     else:
                         # General labels in header - use original background
                         widget.configure(bg='#0d1117', fg='#f0f6fc')
@@ -7697,7 +7594,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # ImageButton - restore original dark background from create_widgets
                 elif widget_class == 'Button' and hasattr(widget, 'is_image_button'):
                     widget.configure(bg='#0d1117')  # Exact original from create_widgets line 519
-                    print(f"[debug] ImageButton in header restored to original dark theme")
                 
                 # Recursively apply to other children
                 else:
@@ -7844,11 +7740,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             playlist_frame = self.find_widget_by_name(self.root, 'playlist_frame')
             if playlist_frame:
-                print(f"[debug] Found playlist_frame, restoring dark theme")
                 playlist_frame.configure(bg='#161b22')  # Original dark color
-                print(f"[debug] Playlist frame restored to dark theme")
             else:
-                print(f"[debug] Playlist frame not found for dark restoration")
+                pass
         except Exception as e:
             print(f"Error restoring dark playlist frame: {e}")
     
@@ -7857,9 +7751,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             song_info_frame = self.find_widget_by_name(self.root, 'song_info_frame')
             if song_info_frame:
-                print(f"[debug] Found song_info_frame, restoring dark theme")
                 song_info_frame.configure(bg='#161b22')  # Original dark color
-                print(f"[debug] Song info frame restored to dark theme")
                 
                 # Apply dark theme to all children in the song info frame
                 self.restore_dark_song_info_children(song_info_frame)
@@ -7867,59 +7759,47 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Also try to find and restore the visualization frames directly
                 time_viz_frame = self.find_widget_by_name(self.root, 'time_viz_frame')
                 if time_viz_frame:
-                    print(f"[debug] Found time_viz_frame directly, restoring dark theme")
                     time_viz_frame.configure(bg='#161b22')  # Original dark background
                     self.restore_dark_song_info_children(time_viz_frame)
-                    print(f"[debug] Time/visualization frame restored to dark background")
                 else:
-                    print(f"[debug] time_viz_frame not found directly for restoration")
+                    pass
                 
                 viz_frame = self.find_widget_by_name(self.root, 'viz_frame')
                 if viz_frame:
-                    print(f"[debug] Found viz_frame directly, restoring dark theme")
                     viz_frame.configure(bg='#21262d')  # Original dark background
                     self.restore_dark_song_info_children(viz_frame)
-                    print(f"[debug] Visualization frame restored to dark background")
                 else:
-                    print(f"[debug] viz_frame not found directly for restoration")
+                    pass
                 
                 # Also try to find and restore current_time_frame directly
                 current_time_frame = self.find_widget_by_name(self.root, 'current_time_frame')
                 if current_time_frame:
-                    print(f"[debug] Found current_time_frame directly, restoring dark theme")
                     current_time_frame.configure(bg='#21262d')  # Original dark background
-                    print(f"[debug] Current time frame restored to dark background")
                 else:
-                    print(f"[debug] current_time_frame not found directly for restoration")
+                    pass
                 
                 # Also try to find and restore progress_frame directly
                 progress_frame = self.find_widget_by_name(self.root, 'progress_frame')
                 if progress_frame:
-                    print(f"[debug] Found progress_frame directly, restoring dark theme")
                     progress_frame.configure(bg='#161b22')  # Original dark background
                     self.restore_dark_song_info_children(progress_frame)
-                    print(f"[debug] Progress frame restored to dark background")
                 else:
-                    print(f"[debug] progress_frame not found directly for restoration")
+                    pass
                 
                 # Also try to find and restore progress bar elements directly
                 progress_bg = self.find_widget_by_name(self.root, 'progress_bg')
                 if progress_bg:
-                    print(f"[debug] Found progress_bg directly, restoring dark theme")
                     progress_bg.configure(bg='#21262d', highlightthickness=0)  # Original dark progress bar background color, no border
-                    print(f"[debug] Progress bg restored to dark background")
                 else:
-                    print(f"[debug] progress_bg not found directly for restoration")
+                    pass
                 
                 progress_fill = self.find_widget_by_name(self.root, 'progress_fill')
                 if progress_fill:
-                    print(f"[debug] Found progress_fill directly, restoring dark theme")
                     progress_fill.configure(bg='#4A9EFF')  # Original dark progress bar fill color
-                    print(f"[debug] Progress fill restored to dark background")
                 else:
-                    print(f"[debug] progress_fill not found directly for restoration")
+                    pass
             else:
-                print(f"[debug] Song info frame not found for dark restoration")
+                pass
         except Exception as e:
             print(f"Error restoring dark song info frame: {e}")
     
@@ -7935,7 +7815,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # Special handling for info_border_frame
                     if widget_name == 'info_border_frame':
                         widget.configure(highlightbackground='#30363d', highlightthickness=1)  # Dark mode border
-                        print(f"[debug] Info border frame restored to dark theme with #30363d border")
                     else:
                         widget.configure(bg='#161b22')
                     self.restore_dark_song_info_children(widget)  # Recursively apply to children
@@ -7960,7 +7839,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         widget.configure(bg='#161b22', highlightthickness=0)  # Remove border in dark mode
                         # Restore original placement (60x60 centered)
                         widget.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-                        print(f"[debug] Album art label restored to dark theme without border")
                     else:
                         # General labels
                         widget.configure(bg='#161b22', fg='#f0f6fc')
@@ -7969,13 +7847,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 elif widget_name == 'current_time_frame':
                     widget.configure(bg='#21262d')  # Original dark background
                     self.restore_dark_song_info_children(widget)  # Recursively apply to children
-                    print(f"[debug] Current time frame restored to dark background")
                 
                 # Special handling for progress_frame
                 elif widget_name == 'progress_frame':
                     widget.configure(bg='#161b22')  # Original dark background
                     self.restore_dark_song_info_children(widget)  # Recursively apply to children
-                    print(f"[debug] Progress frame restored to dark background")
                 
                 # Special handling for progress bar elements
                 elif widget_name in ['progress_bg', 'progress_fill']:
@@ -7983,7 +7859,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         widget.configure(bg='#21262d', highlightthickness=0)  # Original dark progress bar background color, no border
                     else:
                         widget.configure(bg='#4A9EFF')  # Original dark progress bar fill color
-                    print(f"[debug] Progress bar element {widget_name} restored to dark background")
                 
                 # Canvas - keep visualization canvas black, no border
                 elif widget_class == 'Canvas':
@@ -7992,7 +7867,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             bg='#000000',  # Always black for visualization
                             highlightthickness=0  # Remove border
                         )
-                        print(f"[debug] Visualization canvas kept black, no border")
                     else:
                         widget.configure(bg='#0d1117')
                 
@@ -8005,13 +7879,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 elif widget_name == 'viz_frame':
                     widget.configure(bg='#21262d')  # Original dark background
                     self.restore_dark_song_info_children(widget)  # Recursively apply to children
-                    print(f"[debug] Visualization frame restored to dark background")
                 
                 # Time/visualization frame - restore dark background
                 elif widget_name == 'time_viz_frame':
                     widget.configure(bg='#161b22')  # Original dark background
                     self.restore_dark_song_info_children(widget)  # Recursively apply to children
-                    print(f"[debug] Time/visualization frame restored to dark background")
                 
                 # Recursively apply to other children
                 else:
@@ -8025,12 +7897,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             main_frame = self.find_widget_by_name(self.root, 'main_frame')
             if main_frame:
-                print(f"[debug] Found main_frame, restoring dark theme")
                 main_frame.configure(bg='#0d1117')  # Original dark background
                 self.restore_dark_main_children(main_frame)
-                print(f"[debug] Main frame restored to dark theme")
             else:
-                print(f"[debug] Main frame not found for dark restoration")
+                pass
         except Exception as e:
             print(f"Error restoring dark main frame: {e}")
     
@@ -8050,12 +7920,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             lyrics_frame = self.find_widget_by_name(self.root, 'lyrics_frame')
             if lyrics_frame:
-                print(f"[debug] Found lyrics_frame, restoring dark theme")
                 lyrics_frame.configure(bg='#161b22')  # Original dark background
                 self.restore_dark_lyrics_children(lyrics_frame)
-                print(f"[debug] Lyrics frame restored to dark theme")
             else:
-                print(f"[debug] Lyrics frame not found for dark restoration")
+                pass
         except Exception as e:
             print(f"Error restoring dark lyrics frame: {e}")
     
@@ -8084,7 +7952,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                 activebackground='#2ea043',
                                 activeforeground='white'
                             )
-                            print(f"[debug] Open Folder button ({widget_name}) restored to original dark theme")
                         else:
                             widget.configure(bg='#21262d', fg='#f0f6fc')
         except Exception as e:
@@ -8102,7 +7969,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     highlightbackground='#4A6984',  # Original dark mode border color
                     highlightcolor='#4A6984'      # Original dark mode border color
                 )
-                print(f"[debug] Volume slider restored to dark theme with #4A6984 border")
         except Exception as e:
             print(f"Error restoring dark volume slider: {e}")
     
@@ -8204,9 +8070,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 
                 # Search entry
                 elif widget_name == 'search_entry':
-                    print(f"[debug] Found search_entry, restoring dark theme")
                     widget.configure(bg='#0d1117', fg='#f0f6fc', insertbackground='#f0f6fc')
-                    print(f"[debug] Restored search_entry: BG=#0d1117, FG=#f0f6fc")
                 
                 # Clear button canvas
                 elif widget_name == 'clear_search_canvas':
@@ -8226,14 +8090,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     def restore_dark_buttons(self):
         """Restore dark theme to all buttons (except ImageButtons)"""
         try:
-            print("[debug] Starting dark button restoration...")
             # Find all buttons recursively
             self.find_and_restore_dark_buttons(self.root)
             
             # Specifically restore ImageButtons after general button restoration
-            print("[debug] Starting ImageButton restoration...")
             self.restore_dark_imagebuttons()
-            print("[debug] Button restoration completed")
             
         except Exception as e:
             print(f"Error restoring dark buttons: {e}")
@@ -8242,10 +8103,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         """Specifically restore ImageButtons to their original class defaults"""
         try:
             imagebutton_widgets = []
-            print("[debug] Searching for ImageButtons...")
             self.find_imagebuttons_recursive(self.root, imagebutton_widgets)
             
-            print(f"[debug] Found {len(imagebutton_widgets)} ImageButtons")
             for img_btn in imagebutton_widgets:
                 widget_name = getattr(img_btn, '_name', 'unnamed')
                 parent_name = getattr(img_btn.master, '_name', '') if hasattr(img_btn.master, '_name') else ''
@@ -8259,7 +8118,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         cursor='hand2',
                         activebackground='#21262d'
                     )
-                    print(f"[debug] Header ImageButton {widget_name} restored: BG=#0d1117")
                 else:
                     # Other ImageButtons - restore to standard dark colors
                     img_btn.configure(
@@ -8269,7 +8127,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         cursor='hand2',
                         activebackground='#21262d'
                     )
-                    print(f"[debug] ImageButton {widget_name} restored: BG=#161b22")
                 
         except Exception as e:
             print(f"Error restoring dark ImageButtons: {e}")
@@ -8284,15 +8141,13 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     widget_name = getattr(widget, '_name', 'unnamed')
                     # Check both the is_image_button attribute and the widget name pattern
                     if hasattr(widget, 'is_image_button') and widget.is_image_button:
-                        print(f"[debug] Found ImageButton by attribute: {widget_name}")
                         imagebutton_list.append(widget)
                     elif widget_name.startswith('!imagebutton'):
-                        print(f"[debug] Found ImageButton by name: {widget_name}")
                         # Also set the attribute for future reference
                         widget.is_image_button = True
                         imagebutton_list.append(widget)
                     else:
-                        print(f"[debug] Found regular Button: {widget_name}")
+                        pass
                 
                 self.find_imagebuttons_recursive(widget, imagebutton_list)
         except:
@@ -8317,13 +8172,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             activeforeground='white',
                             relief=tk.RAISED
                         )
-                        print(f"[debug] Open Folder button ({widget_name}) restored to green in general button restoration")
                     else:
                         widget.configure(bg='#30363d', fg='white', relief=tk.RAISED)
                 
                 # ImageButton - restore to original ImageButton class defaults
                 elif widget_class == 'Button' and hasattr(widget, 'is_image_button'):
-                    print(f"[debug] Found ImageButton: {widget_name}, restoring to original defaults")
                     # Reset to ImageButton class defaults (from lines 91-98)
                     widget.configure(
                         bg='#161b22',
@@ -8332,7 +8185,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         cursor='hand2',
                         activebackground='#21262d'
                     )
-                    print(f"[debug] ImageButton {widget_name} restored to: BG=#161b22, relief=FLAT")
                 
                 # Recursively check children
                 self.find_and_restore_dark_buttons(widget)
@@ -8343,9 +8195,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     def restore_dark_labels(self):
         """Restore dark theme to all labels in the application"""
         try:
-            print("[debug] Starting dark label restoration...")
             self.restore_dark_labels_recursive(self.root)
-            print("[debug] Label restoration completed")
         except Exception as e:
             print(f"Error restoring dark labels: {e}")
     
@@ -8360,27 +8210,21 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # Header labels - restore to original dark colors from create_widgets
                     if widget_name == 'app_title_label':
                         widget.configure(bg='#0d1117', fg='#4a9eff')  # Exact original from create_widgets line 530-531
-                        print(f"[debug] Restored app_title_label to original dark theme")
                     elif widget_name == 'app_subtitle_label':
                         widget.configure(bg='#0d1117', fg='#8b949e')  # Exact original from create_widgets line 540-541
-                        print(f"[debug] Restored app_subtitle_label to original dark theme")
                     elif widget_name == 'header_icon_label':
                         widget.configure(bg='#0d1117', fg='#4a9eff')  # Exact original from create_widgets line 523
-                        print(f"[debug] Restored header_icon_label to original dark theme")
                     # Volume label specifically
                     elif widget_name == 'volume_label':
                         widget.configure(bg='#161b22', fg='#8b949e')
-                        print(f"[debug] Restored volume_label to dark theme")
                     # Playlist header label
                     elif widget_name == 'playlist_header_label':
                         widget.configure(bg='#161b22', fg='#f0f6fc')
-                        print(f"[debug] Restored playlist_header_label to dark theme")
                     # Other labels - restore to dark theme
                     else:
                         # Try to determine the appropriate background
                         parent_bg = widget.master.cget('bg') if hasattr(widget.master, 'cget') else '#161b22'
                         widget.configure(bg=parent_bg, fg='#f0f6fc')
-                        print(f"[debug] Restored label {widget_name} to dark theme")
                 
                 # Recursively check children
                 self.restore_dark_labels_recursive(widget)
@@ -8394,13 +8238,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             if hasattr(self, 'search_entry'):
                 self.search_entry.configure(bg='#0d1117', fg='#f0f6fc', insertbackground='#f0f6fc')
                 self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=0)  # Keep original padding (0)
-                print(f"[debug] Restored search_entry to dark theme: BG=#0d1117, FG=#f0f6fc")
             
             # Also update the search entry frame padding to original
             search_entry_frame = self.find_widget_by_name(self.root, 'search_entry_frame')
             if search_entry_frame:
                 search_entry_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=0, pady=0)  # Keep original padding (0)
-                print(f"[debug] Restored search_entry_frame to original padding")
                 
         except Exception as e:
             print(f"Error restoring dark search entry: {e}")
@@ -8422,16 +8264,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             except:
                 selection_color = '#1f6feb'
             
-            print(f"[debug] Treeview selection highlight color: {selection_color}")
-            
             # Simply print the color info to console for now
             # Since the existing tooltip system is complex, we'll just add console output
-            print(f"[SELECTION COLOR] Selection Highlight Color: {selection_color}")
+            print(f"Selection Highlight Color: {selection_color}")
             
             # Also add a simple click handler to show the color
             if hasattr(self, 'playlist_treeview'):
                 def show_selection_color(event):
-                    print(f"[CLICKED] Selection Highlight Color: {selection_color}")
+                    print(f"Selection Highlight Color: {selection_color}")
                     # Create a simple color display
                     color_window = tk.Toplevel(self.root)
                     color_window.wm_overrideredirect(True)
