@@ -295,6 +295,10 @@ class TinyTunez:
         # Load saved audio device preference
         self.load_audio_device_preference()
         
+        # Lyrics font size tracking
+        self.lyrics_font_size = 11  # Default font size
+        self.load_lyrics_font_size_preference()
+        
         # Initialize visualization components early to prevent first-start freeze
         self.bar_levels = [0] * 32
         self.bar_peaks = [0] * 32
@@ -935,6 +939,8 @@ class TinyTunez:
         audio_menu.add_command(label="🔄 Refresh Devices", command=self.refresh_audio_devices)
         audio_menu.add_command(label="🔊 Test Device", command=self.show_device_test_dialog)
         audio_menu.add_command(label="🎵 Test MPV Devices", command=self.test_mpv_devices)
+        audio_menu.add_separator()
+        audio_menu.add_command(label="📝 Lyrics Font Size", command=self.show_font_size_dialog)
         
         # Help Menu
         help_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
@@ -1157,6 +1163,129 @@ class TinyTunez:
             
         except Exception as e:
             print(f"Error reinitializing MPV: {e}")
+    
+    def load_lyrics_font_size_preference(self):
+        """Load the saved lyrics font size preference"""
+        try:
+            config_file = 'lyrics_font_config.txt'
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    saved_size = f.read().strip()
+                    if saved_size and saved_size.isdigit():
+                        self.lyrics_font_size = int(saved_size)
+                        print(f"Loaded saved lyrics font size: {self.lyrics_font_size}")
+                    else:
+                        print("No valid saved font size found, using default")
+        except Exception as e:
+            print(f"Error loading lyrics font size preference: {e}")
+    
+    def save_lyrics_font_size_preference(self):
+        """Save the current lyrics font size preference"""
+        try:
+            config_file = 'lyrics_font_config.txt'
+            with open(config_file, 'w') as f:
+                f.write(str(self.lyrics_font_size))
+            print(f"Saved lyrics font size preference: {self.lyrics_font_size}")
+        except Exception as e:
+            print(f"Error saving lyrics font size preference: {e}")
+    
+    def update_lyrics_font_size(self, new_size):
+        """Update the lyrics font size and refresh the display"""
+        try:
+            self.lyrics_font_size = new_size
+            self.save_lyrics_font_size_preference()
+            
+            # Update the lyrics text widget font
+            if hasattr(self, 'lyrics_text'):
+                self.lyrics_text.config(font=('Segoe UI', self.lyrics_font_size))
+                
+                # Update the current line highlighting font for synced lyrics
+                if hasattr(self, 'lyrics_text'):
+                    self.lyrics_text.tag_config("current", background="#FFB366", foreground="#000000", 
+                                              font=('Segoe UI', self.lyrics_font_size, 'bold'))
+                
+                print(f"Updated lyrics font size to: {self.lyrics_font_size}")
+                
+                # Refresh the display without re-processing lyrics content
+                # Just update the font without calling update_lyrics_display
+                if hasattr(self, 'current_lyrics_content') and self.current_lyrics_content:
+                    # Get the current displayed text to preserve it
+                    current_displayed_text = self.lyrics_text.get("1.0", tk.END).strip()
+                    
+                    # If we have synced lyrics active, don't disturb it
+                    if hasattr(self, 'lyrics_lines') and self.lyrics_lines:
+                        # Synced lyrics are active, just update fonts
+                        pass
+                    else:
+                        # Plain text lyrics - just update font without content changes
+                        pass
+            
+        except Exception as e:
+            print(f"Error updating lyrics font size: {e}")
+    
+    def show_font_size_dialog(self):
+        """Show a dialog to adjust lyrics font size"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Lyrics Font Size")
+        dialog.geometry("400x300")
+        dialog.configure(bg='#21262d')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (300 // 2)
+        dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Title
+        title_label = tk.Label(dialog, text="Adjust Lyrics Font Size", 
+                              font=('Segoe UI', 12, 'bold'), 
+                              bg='#21262d', fg='#f0f6fc')
+        title_label.pack(pady=20)
+        
+        # Current size display
+        size_frame = tk.Frame(dialog, bg='#21262d')
+        size_frame.pack(pady=10)
+        
+        tk.Label(size_frame, text="Current Size:", 
+                font=('Segoe UI', 10), 
+                bg='#21262d', fg='#8b949e').pack(side=tk.LEFT, padx=5)
+        
+        size_label = tk.Label(size_frame, text=str(self.lyrics_font_size), 
+                             font=('Segoe UI', 14, 'bold'), 
+                             bg='#21262d', fg='#58a6ff')
+        size_label.pack(side=tk.LEFT)
+        
+        # Slider for font size
+        slider_frame = tk.Frame(dialog, bg='#21262d')
+        slider_frame.pack(pady=20, padx=20, fill=tk.X)
+        
+        font_slider = tk.Scale(slider_frame, from_=8, to=24, orient=tk.HORIZONTAL,
+                              bg='#21262d', fg='#f0f6fc', troughcolor='#30363d',
+                              activebackground='#58a6ff', highlightthickness=0,
+                              command=lambda v: size_label.config(text=str(int(float(v)))))
+        font_slider.set(self.lyrics_font_size)
+        font_slider.pack(fill=tk.X)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg='#21262d')
+        button_frame.pack(pady=20)
+        
+        def apply_font_size():
+            new_size = int(font_slider.get())
+            self.update_lyrics_font_size(new_size)
+            dialog.destroy()
+        
+        tk.Button(button_frame, text="Apply", command=apply_font_size,
+                 bg='#238636', fg='white', font=('Segoe UI', 10),
+                 activebackground='#2ea043', activeforeground='white',
+                 borderwidth=0, padx=20).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy,
+                 bg='#da3633', fg='white', font=('Segoe UI', 10),
+                 activebackground='#f85149', activeforeground='white',
+                 borderwidth=0, padx=20).pack(side=tk.LEFT, padx=5)
     
     def load_audio_device_preference(self):
         """Load the saved audio device preference"""
@@ -1933,7 +2062,7 @@ class TinyTunez:
     frame_lyrics_text,
     bg='#0d1117',
     fg='#f0f6fc',
-    font=('Segoe UI', 11),
+    font=('Segoe UI', self.lyrics_font_size),
     wrap=tk.WORD,
     state=tk.DISABLED,
     borderwidth=0,
@@ -5334,7 +5463,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Add highlighting tag
             self.lyrics_text.tag_add("current", start_line, end_line)
-            self.lyrics_text.tag_config("current", background="#FFB366", foreground="#000000", font=('Segoe UI', 11, 'bold'))
+            self.lyrics_text.tag_config("current", background="#FFB366", foreground="#000000", font=('Segoe UI', self.lyrics_font_size, 'bold'))
             
             # Smart scrolling based on visible line position
             self.lyrics_text.update_idletasks()  # Ensure widget is updated
