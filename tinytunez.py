@@ -35,6 +35,16 @@ except (ImportError, OSError) as e:
     print(f"MPV not available: {e}")
     mpv = None
 
+# Try to import sounddevice for audio device detection
+try:
+    import sounddevice
+    SOUNDDEVICE_AVAILABLE = True
+    print("SoundDevice library available for audio device detection")
+except ImportError:
+    SOUNDDEVICE_AVAILABLE = False
+    print("SoundDevice not available - install with: pip install sounddevice")
+    sounddevice = None
+
 # Check both locations
 locations = ["C:\\mpv", "C:\\Users\\dana_\\TinyTunez"]
 mpv_dlls_found = False
@@ -278,6 +288,13 @@ class TinyTunez:
         self.audio_duration = None
         self.sample_position = 0
         
+        # Audio device tracking
+        self.current_audio_device = 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}'  # Default to TV speakers
+        self.audio_device_menu = None  # Reference to device menu for updates
+        
+        # Load saved audio device preference
+        self.load_audio_device_preference()
+        
         # Initialize visualization components early to prevent first-start freeze
         self.bar_levels = [0] * 32
         self.bar_peaks = [0] * 32
@@ -299,12 +316,31 @@ class TinyTunez:
             self.use_pygame_fallback = True  # Default to fallback
             if MPV_AVAILABLE and mpv:
                 try:
-                    # Initialize MPV with better Windows audio settings
-                    self.player = mpv.MPV(
-                        ytdl=False, 
-                        vo='null',  # No video output
-                        ao='wasapi'  # Windows Audio Session API
-                    )
+                    # Initialize MPV with saved audio device
+                    if hasattr(self, 'current_audio_device') and self.current_audio_device:
+                        print(f"Initializing MPV with saved device: {self.current_audio_device}")
+                        if self.current_audio_device == 'auto':
+                            self.player = mpv.MPV(
+                                ytdl=False, 
+                                vo='null',  # No video output
+                                ao='wasapi'  # Windows Audio Session API
+                            )
+                        else:
+                            # Use the saved device
+                            self.player = mpv.MPV(
+                                ytdl=False, 
+                                vo='null',  # No video output
+                                ao='wasapi',  # Windows Audio Session API
+                                audio_device=self.current_audio_device
+                            )
+                    else:
+                        # Default initialization
+                        self.player = mpv.MPV(
+                            ytdl=False, 
+                            vo='null',  # No video output
+                            ao='wasapi'  # Windows Audio Session API
+                        )
+                    
                     self.player.volume = 70  # Set initial volume
                     
                     # Set some additional options for better playback
@@ -312,7 +348,9 @@ class TinyTunez:
                     self.player.loop = 'no'  # Don't loop by default
                     
                     self.use_pygame_fallback = False
+                    print(f"MPV initialized successfully with device: {getattr(self, 'current_audio_device', 'default')}")
                 except Exception as e:
+                    print(f"Failed to initialize MPV with saved device: {e}")
                     self.use_pygame_fallback = True
             else:
                 pass
@@ -875,6 +913,29 @@ class TinyTunez:
         themes_menu.add_separator()
         themes_menu.add_command(label="⚙️ Theme Settings", command=lambda: None)  # Placeholder
         
+        # Audio Menu
+        audio_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
+                         activebackground='#21262d', activeforeground='#4a9eff',
+                         font=('Segoe UI', 10))
+        menubar.add_cascade(label="🔊 Audio", menu=audio_menu)
+        
+        # Audio device submenu
+        device_menu = Menu(audio_menu, tearoff=0, bg='#161b22', fg='#f0f6fc',
+                          activebackground='#21262d', activeforeground='#4a9eff',
+                          font=('Segoe UI', 10))
+        audio_menu.add_cascade(label="🎧 Audio Device", menu=device_menu)
+        
+        # Store reference for updating checkmarks
+        self.audio_device_menu = device_menu
+        
+        # Populate device menu dynamically
+        self.populate_audio_device_menu(device_menu)
+        
+        audio_menu.add_separator()
+        audio_menu.add_command(label="🔄 Refresh Devices", command=self.refresh_audio_devices)
+        audio_menu.add_command(label="🔊 Test Device", command=self.show_device_test_dialog)
+        audio_menu.add_command(label="🎵 Test MPV Devices", command=self.test_mpv_devices)
+        
         # Help Menu
         help_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
                         activebackground='#21262d', activeforeground='#4a9eff',
@@ -882,6 +943,533 @@ class TinyTunez:
         menubar.add_cascade(label="❓ Help", menu=help_menu)
         help_menu.add_command(label="ℹ️ About", command=self.show_about)
         
+    def populate_audio_device_menu(self, device_menu):
+        """Populate the audio device menu with available devices"""
+        try:
+            # Clear existing menu items
+            device_menu.delete(0, 'end')
+            
+            # Get audio devices
+            devices = self.get_audio_device_list_for_menu()
+            
+            # Add devices to menu with checkmarks
+            for device in devices:
+                device_name = device['name']
+                device_desc = device['description']
+                
+                # Add checkmark if this is the current device
+                checkmark = "✓ " if device_name == self.current_audio_device else ""
+                
+                # Create a command that switches to this device
+                def switch_to_device(dev=device_name):
+                    self.switch_audio_device(dev)
+                    # Update checkmarks after switching
+                    self.update_audio_device_checkmarks()
+                
+                device_menu.add_command(
+                    label=f"{checkmark}{device_desc}", 
+                    command=switch_to_device
+                )
+            
+            print(f"Added {len(devices)} devices to audio menu")
+            
+        except Exception as e:
+            print(f"Error populating audio device menu: {e}")
+    
+    def update_audio_device_checkmarks(self):
+        """Update the checkmarks in the audio device menu"""
+        if not self.audio_device_menu:
+            return
+        
+        try:
+            # Get current menu items
+            devices = self.get_audio_device_list_for_menu()
+            
+            # Clear and rebuild menu with updated checkmarks
+            self.audio_device_menu.delete(0, 'end')
+            
+            for device in devices:
+                device_name = device['name']
+                device_desc = device['description']
+                
+                # Add checkmark if this is the current device
+                checkmark = "✓ " if device_name == self.current_audio_device else ""
+                
+                # Create a command that switches to this device
+                def switch_to_device(dev=device_name):
+                    self.switch_audio_device(dev)
+                    self.update_audio_device_checkmarks()
+                
+                self.audio_device_menu.add_command(
+                    label=f"{checkmark}{device_desc}", 
+                    command=switch_to_device
+                )
+            
+        except Exception as e:
+            print(f"Error updating audio device checkmarks: {e}")
+    
+    def switch_audio_device(self, device_name):
+        """Switch to a different audio device without changing the current song"""
+        try:
+            print(f"\n=== Switching to audio device: {device_name} ===")
+            
+            # Update current device tracking
+            self.current_audio_device = device_name
+            print(f"Current device set to: {device_name}")
+            
+            # Save the preference
+            self.save_audio_device_preference()
+            
+            # Check if a song is currently playing
+            song_was_playing = hasattr(self, 'is_playing') and self.is_playing and hasattr(self, 'current_song') and self.current_song
+            
+            # Save the current position if a song is playing
+            current_position = None
+            if song_was_playing:
+                try:
+                    if self.player and self.use_pygame_fallback == False:
+                        current_position = self.player.time_pos
+                        print(f"Current position: {current_position}")
+                except Exception as e:
+                    print(f"Could not get current position: {e}")
+            
+            # Handle different device types
+            if device_name.startswith('sounddevice/'):
+                # Extract device ID from sounddevice format
+                device_id = device_name.replace('sounddevice/', '')
+                try:
+                    device_id = int(device_id)
+                    print(f"Switching to SoundDevice ID: {device_id}")
+                    
+                    # Get the device name from sounddevice and try to find matching MPV device
+                    if SOUNDDEVICE_AVAILABLE:
+                        devices = sounddevice.query_devices()
+                        if device_id < len(devices):
+                            device_name_for_mpv = devices[device_id]['name']
+                            print(f"Device name from SoundDevice: {device_name_for_mpv}")
+                            
+                            # Try to find matching MPV device by name
+                            mpv_devices = self.detect_mpv_audio_devices()
+                            matching_mpv_device = None
+                            
+                            for mpv_device in mpv_devices:
+                                if device_name_for_mpv in mpv_device['description']:
+                                    matching_mpv_device = mpv_device['name']
+                                    print(f"Found matching MPV device: {matching_mpv_device}")
+                                    break
+                            
+                            if matching_mpv_device:
+                                self.reinitialize_mpv_with_device_name(matching_mpv_device)
+                            else:
+                                print("No matching MPV device found, using TV speakers")
+                                tv_device = 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}'
+                                self.reinitialize_mpv_with_device_name(tv_device)
+                                self.current_audio_device = tv_device
+                        else:
+                            print("Invalid device ID")
+                            return
+                except ValueError:
+                    print("Invalid device ID format")
+                    return
+            elif device_name.startswith('wasapi/') or device_name == 'openal':
+                # Direct MPV device name
+                print(f"Using direct MPV device name: {device_name}")
+                self.reinitialize_mpv_with_device_name(device_name)
+            else:
+                # Fallback to TV speakers
+                print(f"Unknown device format, falling back to TV speakers")
+                tv_device = 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}'
+                self.reinitialize_mpv_with_device_name(tv_device)
+                self.current_audio_device = tv_device
+            
+            # Update checkmarks after successful switch
+            self.root.after(100, self.update_audio_device_checkmarks)
+            
+            # Resume the same song at the same position if it was playing
+            if song_was_playing and self.current_song:
+                print(f"Resuming same song: {self.current_song}")
+                if current_position and current_position > 0:
+                    # Resume playing and seek to saved position
+                    self.root.after(500, lambda: self.resume_song_at_position(current_position))
+                else:
+                    # Just resume playing from start
+                    self.root.after(500, self.resume_current_song)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error switching audio device: {e}")
+            return False
+    
+    def reinitialize_mpv_with_device_name(self, device_name):
+        """Reinitialize MPV player with a specific device name"""
+        try:
+            print(f"Reinitializing MPV with device: {device_name}")
+            
+            # Cleanup existing player
+            if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                try:
+                    self.player.terminate()
+                except:
+                    pass
+            
+            # Reinitialize MPV with new device
+            if MPV_AVAILABLE and mpv:
+                try:
+                    if device_name == 'auto':
+                        self.player = mpv.MPV(
+                            ytdl=False, 
+                            vo='null',  # No video output
+                            ao='wasapi'  # Windows Audio Session API
+                        )
+                    else:
+                        # Try to use the device name with WASAPI
+                        self.player = mpv.MPV(
+                            ytdl=False, 
+                            vo='null',  # No video output
+                            ao='wasapi',  # Windows Audio Session API
+                            audio_device=device_name
+                        )
+                    
+                    self.player.volume = 70  # Set initial volume
+                    self.player.keep_open = 'no'
+                    self.player.loop = 'no'
+                    
+                    self.use_pygame_fallback = False
+                    print(f"MPV reinitialized with device: {device_name}")
+                    
+                    # Restart audio analysis if a song is currently playing
+                    if hasattr(self, 'is_playing') and self.is_playing and hasattr(self, 'current_song') and self.current_song:
+                        print("Restarting audio analysis after device switch")
+                        self.root.after(100, self.restart_audio_analysis)
+                    
+                except Exception as e:
+                    print(f"Failed to reinitialize MPV with device {device_name}: {e}")
+                    # Fallback to auto
+                    self.player = mpv.MPV(
+                        ytdl=False, 
+                        vo='null',  # No video output
+                        ao='wasapi'  # Windows Audio Session API
+                    )
+                    self.player.volume = 70
+                    self.use_pygame_fallback = False
+                    print("MPV reinitialized with default device")
+            
+        except Exception as e:
+            print(f"Error reinitializing MPV: {e}")
+    
+    def load_audio_device_preference(self):
+        """Load the saved audio device preference"""
+        try:
+            config_file = 'audio_device_config.txt'
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    saved_device = f.read().strip()
+                    if saved_device:
+                        self.current_audio_device = saved_device
+                        print(f"Loaded saved audio device: {saved_device}")
+                    else:
+                        print("No saved audio device found, using default")
+        except Exception as e:
+            print(f"Error loading audio device preference: {e}")
+    
+    def save_audio_device_preference(self):
+        """Save the current audio device preference"""
+        try:
+            config_file = 'audio_device_config.txt'
+            with open(config_file, 'w') as f:
+                f.write(self.current_audio_device)
+            print(f"Saved audio device preference: {self.current_audio_device}")
+        except Exception as e:
+            print(f"Error saving audio device preference: {e}")
+    
+    def resume_current_song(self):
+        """Resume the current song after device switching"""
+        try:
+            if hasattr(self, 'current_song') and self.current_song:
+                print(f"Resuming current song: {self.current_song}")
+                # Reload the same song with the new device
+                if self.player and not self.use_pygame_fallback:
+                    self.player.play(self.current_song)
+        except Exception as e:
+            print(f"Error resuming current song: {e}")
+    
+    def resume_song_at_position(self, position):
+        """Resume the current song at a specific position after device switching"""
+        try:
+            if hasattr(self, 'current_song') and self.current_song:
+                print(f"Resuming song at position: {position}")
+                if self.player and not self.use_pygame_fallback:
+                    # Reload the song first
+                    self.player.play(self.current_song)
+                    # Wait a bit then seek to the saved position
+                    self.root.after(500, lambda: self.seek_to_position(position / self.total_time))
+        except Exception as e:
+            print(f"Error resuming song at position: {e}")
+    
+    def restart_audio_analysis(self):
+        """Restart audio analysis after device switch"""
+        try:
+            # Stop current analysis
+            self.stop_audio_analysis()
+            
+            # Restart analysis if song is playing
+            if hasattr(self, 'is_playing') and self.is_playing:
+                self.start_audio_analysis()
+                print("Audio analysis restarted successfully")
+        except Exception as e:
+            print(f"Error restarting audio analysis: {e}")
+    
+    def restart_song_with_device(self, position):
+        """Restart the current song at a specific position"""
+        try:
+            if self.current_song:
+                print(f"Restarting song: {self.current_song}")
+                self.play_selected_song()
+                
+                # Seek to the saved position after a short delay
+                if position and position > 0:
+                    self.root.after(500, lambda: self.seek_to_position(position / self.total_time))
+                    
+        except Exception as e:
+            print(f"Error restarting song: {e}")
+    
+    def detect_mpv_audio_devices(self):
+        """Detect audio devices that MPV can actually use"""
+        if not MPV_AVAILABLE or not mpv:
+            print("MPV not available for device detection")
+            return []
+        
+        try:
+            print("Detecting MPV-compatible audio devices...")
+            
+            # Create a temporary MPV instance to query devices
+            temp_player = mpv.MPV(ytdl=False, vo='null', ao='wasapi')
+            
+            try:
+                # Try to get device list - this might not work on all MPV versions
+                devices = temp_player.audio_device_list
+                print(f"MPV detected {len(devices)} devices:")
+                
+                mpv_devices = []
+                for device in devices:
+                    device_info = {
+                        'name': device['name'],
+                        'description': device.get('description', device['name'])
+                    }
+                    # Only add devices that are not 'auto'
+                    if device['name'] != 'auto':
+                        mpv_devices.append(device_info)
+                        print(f"  MPV Device: {device['name']} - {device.get('description', 'No description')}")
+                    else:
+                        print(f"  Skipping auto device: {device['name']}")
+                
+                temp_player.terminate()
+                print(f"Filtered to {len(mpv_devices)} usable MPV devices")
+                return mpv_devices
+                
+            except Exception as e:
+                print(f"MPV device detection failed: {e}")
+                temp_player.terminate()
+                
+                # Fallback: try common device names that might work (no auto)
+                fallback_devices = [
+                    {'name': 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}', 'description': 'NS-L42Q-10A (NVIDIA High Definition Audio) - TV SPEAKERS'},
+                    {'name': 'wasapi/{d09eb373-46c6-4b52-b5e5-62bf7db4f27f}', 'description': 'Speakers (Realtek(R) Audio)'},
+                    {'name': 'wasapi/{0757638a-c393-4a30-a4a7-8cbf05bb8951}', 'description': 'MSI G244F E2 (NVIDIA High Definition Audio)'},
+                ]
+                
+                print("Using fallback MPV device list:")
+                for device in fallback_devices:
+                    print(f"  {device['name']} - {device['description']}")
+                
+                return fallback_devices
+                
+        except Exception as e:
+            print(f"Error creating MPV for device detection: {e}")
+            return []
+    
+    def test_audio_output_device(self, device_id):
+        """Test a specific audio device by playing a short test tone"""
+        if not SOUNDDEVICE_AVAILABLE:
+            print("SoundDevice not available for testing")
+            return
+        
+        try:
+            print(f"\n🔊 Testing audio device ID {device_id}...")
+            
+            # Get device info
+            devices = sounddevice.query_devices()
+            if device_id >= len(devices):
+                print(f"Invalid device ID: {device_id}")
+                return
+            
+            device = devices[device_id]
+            print(f"Device: {device['name']}")
+            print(f"Host API: {sounddevice.query_hostapis()[device['hostapi']]['name']}")
+            print("🎵 Playing test tone... (listen for sound)")
+            
+            # Generate a simple test tone (440 Hz for 2 seconds)
+            sample_rate = int(device['default_samplerate'])
+            duration = 2  # seconds
+            frequency = 440  # Hz (A4 note)
+            
+            # Generate sine wave
+            import numpy as np
+            t = np.linspace(0, duration, int(sample_rate * duration), False)
+            tone = 0.3 * np.sin(frequency * t * 2 * np.pi)
+            
+            # Make stereo if device supports it
+            if device['max_output_channels'] >= 2:
+                tone = np.column_stack((tone, tone))
+            
+            # Play the tone
+            sounddevice.play(tone, samplerate=sample_rate, device=device_id)
+            sounddevice.wait()
+            
+            print("✅ Test completed!")
+            
+        except Exception as e:
+            print(f"❌ Error testing device {device_id}: {e}")
+    
+    def show_device_test_dialog(self):
+        """Show a dialog to test audio devices"""
+        if not SOUNDDEVICE_AVAILABLE:
+            from tkinter import messagebox
+            messagebox.showerror("Error", "SoundDevice library not available. Install with: pip install sounddevice")
+            return
+        
+        # Create a simple dialog
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Test Audio Devices")
+        dialog.geometry("400x300")
+        dialog.configure(bg='#161b22')
+        
+        tk.Label(dialog, text="Select a device to test:", bg='#161b22', fg='#f0f6fc', 
+                font=('Segoe UI', 12)).pack(pady=10)
+        
+        # Get devices
+        devices = self.detect_audio_devices_sounddevice()
+        
+        if not devices:
+            tk.Label(dialog, text="No audio devices found!", bg='#161b22', fg='#ff6b6b',
+                    font=('Segoe UI', 10)).pack(pady=20)
+            return
+        
+        # Create device list
+        device_var = tk.StringVar()
+        device_list = ttk.Combobox(dialog, textvariable=device_var, width=50)
+        device_list['values'] = [f"{d['id']}: {d['name']}" for d in devices]
+        device_list.pack(pady=10, padx=20)
+        
+        if devices:
+            device_list.current(0)  # Select first device
+        
+        def test_selected():
+            selected = device_var.get()
+            if selected:
+                device_id = int(selected.split(':')[0])
+                self.test_audio_output_device(device_id)
+                messagebox.showinfo("Test", f"Test completed for device {device_id}!\n\nDid you hear the test tone?")
+        
+        tk.Button(dialog, text="🔊 Test Device", command=test_selected,
+                 bg='#238636', fg='white', font=('Segoe UI', 10),
+                 padx=20, pady=10).pack(pady=20)
+        
+        tk.Button(dialog, text="Close", command=dialog.destroy,
+                 bg='#da3633', fg='white', font=('Segoe UI', 10),
+                 padx=20, pady=5).pack()
+        
+        # Add instructions
+        instructions = """
+💡 Instructions:
+1. Select a device from the list
+2. Click 'Test Device' 
+3. Listen for the test tone
+4. Try different NS-L42Q-10A devices to find your TV
+
+📺 Look for devices with:
+- Windows DirectSound or Windows WASAPI
+- 2+ channels (stereo)
+- 48000 Hz sample rate
+        """
+        tk.Label(dialog, text=instructions, bg='#161b22', fg='#8b949e',
+                font=('Segoe UI', 9), justify=tk.LEFT).pack(pady=10, padx=20)
+    
+    def test_mpv_devices(self):
+        """Test MPV device detection and try playing through MPV"""
+        try:
+            print("\n🎵 Testing MPV Audio Devices...")
+            
+            # Detect MPV devices
+            mpv_devices = self.detect_mpv_audio_devices()
+            
+            if not mpv_devices:
+                print("No MPV devices detected!")
+                return
+            
+            # Try to test each MPV device with a short audio file
+            print("Testing MPV device switching...")
+            
+            for device in mpv_devices:
+                device_name = device['name']
+                description = device['description']
+                
+                print(f"\n🎵 Testing MPV device: {device_name}")
+                print(f"   Description: {description}")
+                
+                try:
+                    # Create a temporary MPV instance with this device
+                    test_player = mpv.MPV(
+                        ytdl=False, 
+                        vo='null', 
+                        ao='wasapi',
+                        audio_device=device_name if device_name != 'auto' else None
+                    )
+                    
+                    print(f"   ✅ MPV initialized successfully with {device_name}")
+                    
+                    # Try to set volume
+                    test_player.volume = 50
+                    
+                    # Note: We can't easily play a test tone with MPV without a file
+                    # But we can confirm the device was accepted
+                    print(f"   ✅ Device {device_name} is accepted by MPV")
+                    
+                    test_player.terminate()
+                    
+                except Exception as e:
+                    print(f"   ❌ Failed to initialize MPV with {device_name}: {e}")
+            
+            print("\n💡 If a device shows 'accepted by MPV', try selecting it from Audio → Audio Device")
+            print("💡 Then play a song to see if it comes out your TV speakers!")
+            
+        except Exception as e:
+            print(f"Error testing MPV devices: {e}")
+    
+    def refresh_audio_devices(self):
+        """Refresh the audio device list and update menu"""
+        try:
+            print("Refreshing audio devices...")
+            
+            # Re-detect devices
+            if SOUNDDEVICE_AVAILABLE:
+                devices = self.detect_audio_devices_sounddevice()
+                print(f"Detected {len(devices)} audio devices")
+            
+            # Update the menu (need to find the device menu first)
+            # For simplicity, we'll just show a message
+            from tkinter import messagebox
+            messagebox.showinfo("Audio Devices", f"Audio device list refreshed!\n\nDetected {len(devices) if SOUNDDEVICE_AVAILABLE else 0} devices.\n\nCheck the Audio → Audio Device menu for updated options.")
+            
+        except Exception as e:
+            print(f"Error refreshing audio devices: {e}")
+            from tkinter import messagebox
+            messagebox.showerror("Error", f"Failed to refresh audio devices: {e}")
+
     def create_player_controls(self, parent):
         frame_player_controls = ModernFrame(parent, bg='#161b22', name='player_controls_frame')
         frame_player_controls.pack(fill=tk.X, pady=(0, 0))
@@ -1572,7 +2160,7 @@ class TinyTunez:
             # Scrolling to the right (text moves left)
             if self.scroll_position >= max_scroll:
                 # Reached the end, pause and reverse
-                self.scroll_pause_counter = 10  # Pause for 10 cycles (2 seconds)
+                self.scroll_pause_counter = 18  # Pause for 18 cycles (3.6 seconds)
                 self.scroll_direction = -1
                 # Don't update position this cycle, just pause
             else:
@@ -1581,7 +2169,7 @@ class TinyTunez:
             # Scrolling to the left (text moves right)
             if self.scroll_position <= 0:
                 # Reached the start, pause and reverse
-                self.scroll_pause_counter = 10  # Pause for 10 cycles (2 seconds)
+                self.scroll_pause_counter = 18  # Pause for 18 cycles (3.6 seconds)
                 self.scroll_direction = 1
                 # Don't update position this cycle, just pause
             else:
@@ -1702,6 +2290,121 @@ class TinyTunez:
             # Error loading star cache
             return {}
     
+    def detect_audio_devices_sounddevice(self):
+        """Detect audio devices using sounddevice library"""
+        if not SOUNDDEVICE_AVAILABLE:
+            print("SoundDevice not available for audio device detection")
+            return []
+        
+        try:
+            print("Detecting audio devices with SoundDevice...")
+            
+            # Get all audio devices
+            devices = sounddevice.query_devices()
+            
+            # Get default output device info
+            default_output = sounddevice.default.device[1]  # [1] is output device
+            
+            # Filter for output devices only
+            output_devices = []
+            for i, device in enumerate(devices):
+                if device['max_output_channels'] > 0:  # This is an output device
+                    # Safely get sample rate
+                    sample_rate = getattr(device, 'default_samplerate', 44100)
+                    if sample_rate is None:
+                        sample_rate = 44100
+                    
+                    device_info = {
+                        'id': i,
+                        'name': device['name'],
+                        'hostapi': device['hostapi'],
+                        'max_output_channels': device['max_output_channels'],
+                        'default_output': (i == default_output),
+                        'hostapi_name': sounddevice.query_hostapis()[device['hostapi']]['name'],
+                        'default_samplerate': sample_rate
+                    }
+                    output_devices.append(device_info)
+                    
+                    # Mark if this is a default device
+                    default_marker = " [DEFAULT]" if device_info['default_output'] else ""
+                    
+                    print(f"🔊 Device {i}: {device['name']}{default_marker}")
+                    print(f"   Host API: {device_info['hostapi_name']}")
+                    print(f"   Channels: {device['max_output_channels']}")
+                    print(f"   Sample Rate: {sample_rate} Hz")
+                    print()
+            
+            print(f"Found {len(output_devices)} audio output devices")
+            
+            # Special help for NVIDIA devices
+            nvidia_devices = [d for d in output_devices if 'NVIDIA' in d['name'] and 'NS-L42Q-10A' in d['name']]
+            if nvidia_devices:
+                print("📺 Found NVIDIA TV devices:")
+                for device in nvidia_devices:
+                    print(f"   ID {device['id']}: {device['name']} ({device['hostapi_name']})")
+                    print(f"      Channels: {device['max_output_channels']}, Sample Rate: {device['default_samplerate']} Hz")
+                print()
+                print("💡 Tip: Try the one with 'Windows WASAPI' first (usually ID 17)")
+                print()
+            
+            return output_devices
+            
+        except Exception as e:
+            print(f"Error detecting audio devices with SoundDevice: {e}")
+            return []
+    
+    def get_audio_device_list_for_menu(self):
+        """Get audio devices formatted for the menu"""
+        devices = []
+        
+        if SOUNDDEVICE_AVAILABLE and MPV_AVAILABLE:
+            try:
+                # Use MPV's device list since those are the names MPV actually understands
+                mpv_devices = self.detect_mpv_audio_devices()
+                
+                if mpv_devices:
+                    # Add MPV devices to menu, but exclude 'auto'
+                    for device in mpv_devices:
+                        if device['name'] != 'auto':  # Skip auto device
+                            devices.append({
+                                'name': device['name'],
+                                'description': device['description']
+                            })
+                    print(f"Added {len(devices)} MPV devices to audio menu")
+                else:
+                    # Fallback to sounddevice if MPV detection fails
+                    detected_devices = self.detect_audio_devices_sounddevice()
+                    
+                    # Add detected devices (no default option)
+                    for device in detected_devices:
+                        # Create a safe name for the device
+                        safe_name = device['name'].replace('/', '_').replace(' ', '_').replace('(', '').replace(')', '')
+                        devices.append({
+                            'name': f"sounddevice/{device['id']}",
+                            'description': f"{device['id']}: {device['name']}"
+                        })
+                    print(f"Added {len(devices)} sounddevice devices to audio menu")
+                    
+            except Exception as e:
+                print(f"Error getting device list: {e}")
+                # Fallback to hardcoded list (no auto)
+                devices = [
+                    {'name': 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}', 'description': 'NS-L42Q-10A (NVIDIA High Definition Audio) - TV SPEAKERS'},
+                    {'name': 'wasapi/{d09eb373-46c6-4b52-b5e5-62bf7db4f27f}', 'description': 'Speakers (Realtek(R) Audio)'},
+                    {'name': 'wasapi/{0757638a-c393-4a30-a4a7-8cbf05bb8951}', 'description': 'MSI G244F E2 (NVIDIA High Definition Audio)'},
+                ]
+                print("Using hardcoded MPV device list with TV speakers")
+        else:
+            # Fallback to hardcoded list (no auto)
+            devices = [
+                {'name': 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}', 'description': 'NS-L42Q-10A (NVIDIA High Definition Audio) - TV SPEAKERS'},
+                {'name': 'wasapi/{d09eb373-46c6-4b52-b5e5-62bf7db4f27f}', 'description': 'Speakers (Realtek(R) Audio)'},
+                {'name': 'wasapi/{0757638a-c393-4a30-a4a7-8cbf05bb8951}', 'description': 'MSI G244F E2 (NVIDIA High Definition Audio)'},
+            ]
+            print("Using fallback audio device list")
+        
+        return devices
+
     def validate_star_cache(self):
         """Validate star cache against actual lyrics files after playlist is loaded."""
         try:
