@@ -289,7 +289,7 @@ class TinyTunez:
         self.sample_position = 0
         
         # Audio device tracking
-        self.current_audio_device = 'wasapi/{7f21c2ab-ae95-4bbb-aa98-9c593d04d4cf}'  # Default to TV speakers
+        self.current_audio_device = None  # Will be set to first available device
         self.audio_device_menu = None  # Reference to device menu for updates
         
         # Load saved audio device preference
@@ -320,7 +320,7 @@ class TinyTunez:
             self.use_pygame_fallback = True  # Default to fallback
             if MPV_AVAILABLE and mpv:
                 try:
-                    # Initialize MPV with saved audio device
+                    # Initialize MPV with saved audio device or default
                     if hasattr(self, 'current_audio_device') and self.current_audio_device:
                         print(f"Initializing MPV with saved device: {self.current_audio_device}")
                         if self.current_audio_device == 'auto':
@@ -338,7 +338,8 @@ class TinyTunez:
                                 audio_device=self.current_audio_device
                             )
                     else:
-                        # Default initialization
+                        # Default initialization - no device saved
+                        print("Initializing MPV with default device")
                         self.player = mpv.MPV(
                             ytdl=False, 
                             vo='null',  # No video output
@@ -352,7 +353,8 @@ class TinyTunez:
                     self.player.loop = 'no'  # Don't loop by default
                     
                     self.use_pygame_fallback = False
-                    print(f"MPV initialized successfully with device: {getattr(self, 'current_audio_device', 'default')}")
+                    device_used = getattr(self, 'current_audio_device', 'default')
+                    print(f"MPV initialized successfully with device: {device_used}")
                 except Exception as e:
                     print(f"Failed to initialize MPV with saved device: {e}")
                     self.use_pygame_fallback = True
@@ -1298,41 +1300,24 @@ class TinyTunez:
                         self.current_audio_device = saved_device
                         print(f"Loaded saved audio device: {saved_device}")
                     else:
-                        print("No saved audio device found, using default")
+                        print("No saved audio device found, will use default")
+                        self.current_audio_device = None
+            else:
+                print("No audio device config file, will use default")
+                self.current_audio_device = None
         except Exception as e:
             print(f"Error loading audio device preference: {e}")
-    
-    def save_audio_device_preference(self):
-        """Save the current audio device preference"""
-        try:
-            config_file = 'audio_device_config.txt'
-            with open(config_file, 'w') as f:
-                f.write(self.current_audio_device)
-            print(f"Saved audio device preference: {self.current_audio_device}")
-        except Exception as e:
-            print(f"Error saving audio device preference: {e}")
-    
-    def resume_current_song(self):
-        """Resume the current song after device switching"""
-        try:
-            if hasattr(self, 'current_song') and self.current_song:
-                print(f"Resuming current song: {self.current_song}")
-                # Reload the same song with the new device
-                if self.player and not self.use_pygame_fallback:
-                    self.player.play(self.current_song)
-        except Exception as e:
-            print(f"Error resuming current song: {e}")
+            self.current_audio_device = None
     
     def resume_song_at_position(self, position):
-        """Resume the current song at a specific position after device switching"""
+        """Resume the current song at a specific position"""
         try:
-            if hasattr(self, 'current_song') and self.current_song:
-                print(f"Resuming song at position: {position}")
-                if self.player and not self.use_pygame_fallback:
-                    # Reload the song first
-                    self.player.play(self.current_song)
-                    # Wait a bit then seek to the saved position
-                    self.root.after(500, lambda: self.seek_to_position(position / self.total_time))
+            print(f"Resuming song at position: {position}")
+            if self.player and not self.use_pygame_fallback:
+                # Reload the song first
+                self.player.play(self.current_song)
+                # Wait a bit then seek to the saved position
+                self.root.after(500, lambda: self.seek_to_position(position / self.total_time))
         except Exception as e:
             print(f"Error resuming song at position: {e}")
     

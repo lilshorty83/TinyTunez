@@ -193,6 +193,10 @@ star_cache.json
 *.log
 debug_*.txt
 
+# User preferences - Keep local
+audio_device_config.txt
+lyrics_font_config.txt
+
 # Binary files
 *.dll
 *.exe
