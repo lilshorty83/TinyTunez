@@ -887,14 +887,33 @@ class TinyTunez:
         return f"{minutes}:{seconds:02d}"
     
     def create_menu_bar(self):
-        menubar = Menu(self.root, bg='#0d1117', fg='#f0f6fc', 
-                      activebackground='#21262d', activeforeground='#4a9eff',
+        # Get current theme colors
+        current_theme = getattr(self, 'current_theme', 'dark')
+        if current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+            theme = PEACH_THEME
+            menubar_bg = theme['primary']
+            menubar_fg = theme['text_on_primary']
+            menu_bg = theme['surface']
+            menu_fg = theme['text_primary']
+            active_bg = theme['primary']
+            active_fg = theme['text_on_primary']
+        else:
+            # Dark theme colors
+            menubar_bg = '#0d1117'
+            menubar_fg = '#f0f6fc'
+            menu_bg = '#161b22'
+            menu_fg = '#f0f6fc'
+            active_bg = '#21262d'
+            active_fg = '#4a9eff'
+        
+        menubar = Menu(self.root, bg=menubar_bg, fg=menubar_fg, 
+                      activebackground=active_bg, activeforeground=active_fg,
                       borderwidth=0, font=('Segoe UI', 10))
         self.root.config(menu=menubar)
         
         # File Menu
-        file_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
-                        activebackground='#21262d', activeforeground='#4a9eff',
+        file_menu = Menu(menubar, tearoff=0, bg=menu_bg, fg=menu_fg,
+                        activebackground=active_bg, activeforeground=active_fg,
                         font=('Segoe UI', 10))
         menubar.add_cascade(label="📁 File", menu=file_menu)
         file_menu.add_command(label="🎵 Add Songs", command=self.add_songs)
@@ -906,8 +925,8 @@ class TinyTunez:
         file_menu.add_command(label="❌ Exit", command=self.root.quit)
         
         # Themes Menu
-        themes_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
-                          activebackground='#21262d', activeforeground='#4a9eff',
+        themes_menu = Menu(menubar, tearoff=0, bg=menu_bg, fg=menu_fg,
+                          activebackground=active_bg, activeforeground=active_fg,
                           font=('Segoe UI', 10))
         menubar.add_cascade(label="🎨 Themes", menu=themes_menu)
         themes_menu.add_command(label="🌙 Default", command=self.apply_dark_theme)
@@ -920,14 +939,14 @@ class TinyTunez:
         themes_menu.add_command(label="⚙️ Theme Settings", command=lambda: None)  # Placeholder
         
         # Audio Menu
-        audio_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
-                         activebackground='#21262d', activeforeground='#4a9eff',
+        audio_menu = Menu(menubar, tearoff=0, bg=menu_bg, fg=menu_fg,
+                         activebackground=active_bg, activeforeground=active_fg,
                          font=('Segoe UI', 10))
         menubar.add_cascade(label="🔊 Audio", menu=audio_menu)
         
         # Audio device submenu
-        device_menu = Menu(audio_menu, tearoff=0, bg='#161b22', fg='#f0f6fc',
-                          activebackground='#21262d', activeforeground='#4a9eff',
+        device_menu = Menu(audio_menu, tearoff=0, bg=menu_bg, fg=menu_fg,
+                          activebackground=active_bg, activeforeground=active_fg,
                           font=('Segoe UI', 10))
         audio_menu.add_cascade(label="🎧 Audio Device", menu=device_menu)
         
@@ -945,12 +964,16 @@ class TinyTunez:
         audio_menu.add_command(label="📝 Lyrics Font Size", command=self.show_font_size_dialog)
         
         # Help Menu
-        help_menu = Menu(menubar, tearoff=0, bg='#161b22', fg='#f0f6fc',
-                        activebackground='#21262d', activeforeground='#4a9eff',
+        help_menu = Menu(menubar, tearoff=0, bg=menu_bg, fg=menu_fg,
+                        activebackground=active_bg, activeforeground=active_fg,
                         font=('Segoe UI', 10))
         menubar.add_cascade(label="❓ Help", menu=help_menu)
         help_menu.add_command(label="ℹ️ About", command=self.show_about)
         
+    def recreate_menu_bar(self):
+        """Recreate the menu bar with current theme colors"""
+        self.create_menu_bar()
+    
     def populate_audio_device_menu(self, device_menu):
         """Populate the audio device menu with available devices"""
         try:
@@ -1203,7 +1226,16 @@ class TinyTunez:
                 
                 # Update the current line highlighting font for synced lyrics
                 if hasattr(self, 'lyrics_text'):
-                    self.lyrics_text.tag_config("current", background="#FFB366", foreground="#000000", 
+                    # Use theme-aware highlight color
+                    current_theme = getattr(self, 'current_theme', 'dark')
+                    if current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+                        highlight_bg = '#FFB366'  # Peach highlight
+                        highlight_fg = '#000000'
+                    else:
+                        highlight_bg = '#4A6984'  # Dark theme highlight
+                        highlight_fg = '#FFFFFF'
+                    
+                    self.lyrics_text.tag_config("current", background=highlight_bg, foreground=highlight_fg, 
                                               font=('Segoe UI', self.lyrics_font_size, 'bold'))
                 
                 print(f"Updated lyrics font size to: {self.lyrics_font_size}")
@@ -1309,6 +1341,17 @@ class TinyTunez:
             print(f"Error loading audio device preference: {e}")
             self.current_audio_device = None
     
+    def save_audio_device_preference(self):
+        """Save the current audio device preference"""
+        try:
+            if self.current_audio_device:
+                config_file = 'audio_device_config.txt'
+                with open(config_file, 'w') as f:
+                    f.write(self.current_audio_device)
+                print(f"Saved audio device preference: {self.current_audio_device}")
+        except Exception as e:
+            print(f"Error saving audio device preference: {e}")
+    
     def resume_song_at_position(self, position):
         """Resume the current song at a specific position"""
         try:
@@ -1320,6 +1363,21 @@ class TinyTunez:
                 self.root.after(500, lambda: self.seek_to_position(position / self.total_time))
         except Exception as e:
             print(f"Error resuming song at position: {e}")
+    
+    def resume_current_song(self):
+        """Resume the current song from the beginning"""
+        try:
+            print(f"Resuming current song: {self.current_song}")
+            if self.player and not self.use_pygame_fallback:
+                self.player.play(self.current_song)
+            else:
+                # Fallback to pygame mixer
+                import pygame.mixer
+                pygame.mixer.music.load(self.current_song)
+                pygame.mixer.music.play()
+                pygame.mixer.music.set_volume(self.volume)
+        except Exception as e:
+            print(f"Error resuming current song: {e}")
     
     def restart_audio_analysis(self):
         """Restart audio analysis after device switch"""
@@ -5448,7 +5506,17 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Add highlighting tag
             self.lyrics_text.tag_add("current", start_line, end_line)
-            self.lyrics_text.tag_config("current", background="#FFB366", foreground="#000000", font=('Segoe UI', self.lyrics_font_size, 'bold'))
+            
+            # Use theme-aware highlight color
+            current_theme = getattr(self, 'current_theme', 'dark')
+            if current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+                highlight_bg = '#FFB366'  # Peach highlight
+                highlight_fg = '#000000'
+            else:
+                highlight_bg = '#4A6984'  # Dark theme highlight
+                highlight_fg = '#FFFFFF'
+            
+            self.lyrics_text.tag_config("current", background=highlight_bg, foreground=highlight_fg, font=('Segoe UI', self.lyrics_font_size, 'bold'))
             
             # Smart scrolling based on visible line position
             self.lyrics_text.update_idletasks()  # Ensure widget is updated
@@ -6106,8 +6174,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Preload audio analysis when song is selected (not when played)
             def preload_audio_analysis():
                 self.load_audio_for_analysis(self.current_song)
-                # Start visualization immediately even before analysis completes
-                self.start_visualization()
+                # Don't start visualization here - it will be started after cleanup
                 # Start analysis in background
                 self.start_audio_analysis()
             
@@ -6186,6 +6253,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Start time tracking
                 self.start_time_tracking()
                 
+                # Start visualization after cleanup is complete
+                self.start_visualization()
+                
                 # Start audio analysis for visualization
                 self.start_audio_analysis()
                 
@@ -6252,6 +6322,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Stop all timers and threads first
             self.stop_karaoke_timer()
             self.stop_audio_analysis()
+            self.stop_visualization()
             self.stop_time_tracking()
             # Don't stop scrolling here - it should continue for the new song
             
@@ -6431,6 +6502,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.stop_karaoke_timer()
                 # Stop audio analysis to prevent jittering
                 self.stop_audio_analysis()
+                # Stop visualization to freeze it
+                self.stop_visualization()
                 # Stop time tracking to prevent updates while paused
                 self.stop_time_tracking()
                 # Clear audio data to freeze visualization
@@ -6822,7 +6895,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                 if max_amplitude > 0.01:  # Only print occasionally if there's actual signal
                                     if not hasattr(self, 'viz_debug_counter'):
                                         self.viz_debug_counter = 0
-                                self.viz_debug_counter += 1
+                                    self.viz_debug_counter += 1
                     
                 except Exception as e:
                     print(f"Error in audio analysis: {e}")
@@ -6899,8 +6972,29 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         """Start the audio visualization"""
         self.visualization_running = True
         if hasattr(self, 'visualization_canvas'):
-            pass  # Canvas exists, ready for visualization
-        self.animate_visualization()
+            # Force complete canvas recreation
+            try:
+                # Clear all canvas items
+                self.visualization_canvas.delete("all")
+                # Clear our references to force recreation
+                if hasattr(self, 'viz_bars'):
+                    self.viz_bars.clear()
+                if hasattr(self, 'viz_peaks'):
+                    self.viz_peaks.clear()
+                # Force canvas to be visible by repacking it
+                self.visualization_canvas.pack_forget()
+                self.visualization_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            except Exception as e:
+                pass  # Ignore errors
+            # Start the animation loop
+            self.animate_visualization()
+    
+    def stop_visualization(self):
+        """Stop the audio visualization"""
+        self.visualization_running = False
+        if hasattr(self, 'visualization_canvas'):
+            self.visualization_canvas.delete("all")
+    
     def animate_visualization(self):
         """Create Winamp-style visualization with many bars and peak effects"""
         if not self.visualization_running:
@@ -6966,6 +7060,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         # Use real audio data if available, otherwise show placeholder animation
         if self.audio_data and len(self.audio_data) >= num_bars and not self.is_paused:
+            
             # Use actual audio analysis data - very responsive transitions
             for i in range(num_bars):
                 amplitude = self.audio_data[i]
@@ -6994,6 +7089,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 else:
                     self.bar_peaks[i] = max(0, self.bar_peaks[i] - height * 0.01)  # Very slow decay
         
+        # Debug: Check if canvas items exist
         # Update existing canvas items instead of recreating them
         for i in range(min(num_bars, len(self.viz_bars), len(self.viz_peaks))):
             # Calculate positions
@@ -7796,6 +7892,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Update all open Settings dialogs
             self.update_all_settings_dialogs_theme()
             
+            # Recreate menu bar with peach theme colors
+            self.recreate_menu_bar()
+            
+            # Update lyrics highlight color if synced lyrics are active
+            if hasattr(self, 'lyrics_text') and hasattr(self, 'current_line_index') and self.current_line_index is not None:
+                # Update the current highlight to use peach colors
+                self.lyrics_text.tag_config("current", background="#FFB366", foreground="#000000")
+            
             # Save theme preference to settings
             self.settings['theme'] = 'peach'
             self.save_settings()
@@ -8518,6 +8622,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Update all open Settings dialogs
             self.update_all_settings_dialogs_theme()
+            
+            # Recreate menu bar with dark theme colors
+            self.recreate_menu_bar()
+            
+            # Update lyrics highlight color if synced lyrics are active
+            if hasattr(self, 'lyrics_text') and hasattr(self, 'current_line_index') and self.current_line_index is not None:
+                # Update the current highlight to use dark theme colors
+                self.lyrics_text.tag_config("current", background="#4A6984", foreground="#FFFFFF")
             
             # Save theme preference to settings
             self.settings['theme'] = 'dark'
