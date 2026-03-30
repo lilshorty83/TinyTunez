@@ -229,7 +229,8 @@ class TinyTunez:
         self.scroll_direction = 1
         self.scroll_enabled = False
         self.scroll_pause_counter = 0
-        self.scroll_speed = 200  # milliseconds between scroll updates (slower)
+        self.scroll_speed = 250  # milliseconds between scroll updates (balanced speed)
+        self.scroll_pause_duration = 25  # Pause duration in cycles (7.5 seconds at 300ms)
         
         # Last played song tracking
         self.last_played_file = "last_played.json"
@@ -299,6 +300,13 @@ class TinyTunez:
         self.lyrics_font_size = 11  # Default font size
         self.load_lyrics_font_size_preference()
         
+        # Lyrics search tracking to prevent duplicates
+        self.lyrics_search_in_progress = False
+        
+        # Audio output driver tracking
+        self.audio_output_driver = 'wasapi'  # Default to WASAPI
+        self.load_audio_output_driver_preference()
+        
         # Initialize visualization components early to prevent first-start freeze
         self.bar_levels = [0] * 32
         self.bar_peaks = [0] * 32
@@ -327,14 +335,14 @@ class TinyTunez:
                             self.player = mpv.MPV(
                                 ytdl=False, 
                                 vo='null',  # No video output
-                                ao='wasapi'  # Windows Audio Session API
+                                ao=self.audio_output_driver  # Use selected audio output driver
                             )
                         else:
                             # Use the saved device
                             self.player = mpv.MPV(
                                 ytdl=False, 
                                 vo='null',  # No video output
-                                ao='wasapi',  # Windows Audio Session API
+                                ao=self.audio_output_driver,  # Use selected audio output driver
                                 audio_device=self.current_audio_device
                             )
                     else:
@@ -343,7 +351,7 @@ class TinyTunez:
                         self.player = mpv.MPV(
                             ytdl=False, 
                             vo='null',  # No video output
-                            ao='wasapi'  # Windows Audio Session API
+                            ao=self.audio_output_driver  # Use selected audio output driver
                         )
                     
                     self.player.volume = 70  # Set initial volume
@@ -929,14 +937,14 @@ class TinyTunez:
                           activebackground=active_bg, activeforeground=active_fg,
                           font=('Segoe UI', 10))
         menubar.add_cascade(label="🎨 Themes", menu=themes_menu)
-        themes_menu.add_command(label="🌙 Default", command=self.apply_dark_theme)
+        themes_menu.add_command(label="🌙 Dark Theme (Default)", command=self.apply_dark_theme)
         if PEACH_THEME_AVAILABLE:
             themes_menu.add_command(label="🍑 Peach Theme", command=self.apply_peach_theme)
-        themes_menu.add_command(label="☀️ Light Mode", command=lambda: None)  # Placeholder
-        themes_menu.add_separator()
-        themes_menu.add_command(label="🎨 Custom Theme...", command=lambda: None)  # Placeholder
-        themes_menu.add_separator()
-        themes_menu.add_command(label="⚙️ Theme Settings", command=lambda: None)  # Placeholder
+        # themes_menu.add_command(label="☀️ Light Mode", command=lambda: None)  # Placeholder
+        # themes_menu.add_separator()
+        # themes_menu.add_command(label="🎨 Custom Theme...", command=lambda: None)  # Placeholder
+        # themes_menu.add_separator()
+        # themes_menu.add_command(label="⚙️ Theme Settings", command=lambda: None)  # Placeholder
         
         # Audio Menu
         audio_menu = Menu(menubar, tearoff=0, bg=menu_bg, fg=menu_fg,
@@ -956,10 +964,28 @@ class TinyTunez:
         # Populate device menu dynamically
         self.populate_audio_device_menu(device_menu)
         
+        # Audio Output Driver submenu
+        driver_menu = Menu(audio_menu, tearoff=0, bg=menu_bg, fg=menu_fg,
+                           activebackground=active_bg, activeforeground=active_fg,
+                           font=('Segoe UI', 10))
+        audio_menu.add_cascade(label="🔊 Audio Output", menu=driver_menu)
+        
+        # Store reference for updating checkmarks
+        self.audio_driver_menu = driver_menu
+        
+        # Add driver options
+        driver_menu.add_command(label="🎵 WASAPI (Best Quality)", command=lambda: self.set_audio_output_driver('wasapi'))
+        driver_menu.add_command(label="🔊 DirectSound (Streaming Friendly)", command=lambda: self.set_audio_output_driver('directsound'))
+        driver_menu.add_command(label="📻 WaveOut (Most Compatible)", command=lambda: self.set_audio_output_driver('waveout'))
+        driver_menu.add_command(label="🌐 OpenAL (Cross-Platform)", command=lambda: self.set_audio_output_driver('openal'))
+        
+        # Update checkmarks
+        self.update_audio_output_menu_checkmarks()
+        
         audio_menu.add_separator()
         audio_menu.add_command(label="🔄 Refresh Devices", command=self.refresh_audio_devices)
-        audio_menu.add_command(label="🔊 Test Device", command=self.show_device_test_dialog)
-        audio_menu.add_command(label="🎵 Test MPV Devices", command=self.test_mpv_devices)
+        # audio_menu.add_command(label="🔊 Test Device", command=self.show_device_test_dialog)
+        # audio_menu.add_command(label="🎵 Test MPV Devices", command=self.test_mpv_devices)
         audio_menu.add_separator()
         audio_menu.add_command(label="📝 Lyrics Font Size", command=self.show_font_size_dialog)
         
@@ -1151,14 +1177,14 @@ class TinyTunez:
                         self.player = mpv.MPV(
                             ytdl=False, 
                             vo='null',  # No video output
-                            ao='wasapi'  # Windows Audio Session API
+                            ao=self.audio_output_driver  # Use selected audio output driver
                         )
                     else:
-                        # Try to use the device name with WASAPI
+                        # Try to use the device name with selected driver
                         self.player = mpv.MPV(
                             ytdl=False, 
                             vo='null',  # No video output
-                            ao='wasapi',  # Windows Audio Session API
+                            ao=self.audio_output_driver,  # Use selected audio output driver
                             audio_device=device_name
                         )
                     
@@ -1180,7 +1206,7 @@ class TinyTunez:
                     self.player = mpv.MPV(
                         ytdl=False, 
                         vo='null',  # No video output
-                        ao='wasapi'  # Windows Audio Session API
+                        ao=self.audio_output_driver  # Use selected audio output driver
                     )
                     self.player.volume = 70
                     self.use_pygame_fallback = False
@@ -1213,6 +1239,36 @@ class TinyTunez:
             print(f"Saved lyrics font size preference: {self.lyrics_font_size}")
         except Exception as e:
             print(f"Error saving lyrics font size preference: {e}")
+    
+    def load_audio_output_driver_preference(self):
+        """Load the saved audio output driver preference"""
+        try:
+            config_file = 'audio_output_driver_config.txt'
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    saved_driver = f.read().strip()
+                    if saved_driver in ['wasapi', 'directsound', 'waveout', 'openal']:
+                        self.audio_output_driver = saved_driver
+                        print(f"Loaded saved audio output driver: {self.audio_output_driver}")
+                    else:
+                        print(f"Invalid saved driver '{saved_driver}', using default WASAPI")
+                        self.audio_output_driver = 'wasapi'
+            else:
+                print("No audio output driver config file, using default WASAPI")
+                self.audio_output_driver = 'wasapi'
+        except Exception as e:
+            print(f"Error loading audio output driver preference: {e}")
+            self.audio_output_driver = 'wasapi'
+    
+    def save_audio_output_driver_preference(self):
+        """Save the current audio output driver preference"""
+        try:
+            config_file = 'audio_output_driver_config.txt'
+            with open(config_file, 'w') as f:
+                f.write(str(self.audio_output_driver))
+            print(f"Saved audio output driver preference: {self.audio_output_driver}")
+        except Exception as e:
+            print(f"Error saving audio output driver preference: {e}")
     
     def update_lyrics_font_size(self, new_size):
         """Update the lyrics font size and refresh the display"""
@@ -1257,12 +1313,98 @@ class TinyTunez:
         except Exception as e:
             print(f"Error updating lyrics font size: {e}")
     
+    def set_audio_output_driver(self, driver):
+        """Set the audio output driver and restart audio if needed"""
+        if driver not in ['wasapi', 'directsound', 'waveout', 'openal']:
+            print(f"Invalid audio driver: {driver}")
+            return
+        
+        if self.audio_output_driver == driver:
+            print(f"Audio driver already set to: {driver}")
+            return
+        
+        print(f"Switching audio output driver from {self.audio_output_driver} to {driver}")
+        old_driver = self.audio_output_driver
+        self.audio_output_driver = driver
+        self.save_audio_output_driver_preference()
+        
+        # For now, just show a message that the driver has been changed
+        # The new driver will be used for the next song
+        print(f"Audio output driver switched to: {driver}")
+        print(f"Note: New driver will be used for the next song. Current song will continue with old driver.")
+        
+        # Update menu checkmarks
+        self.update_audio_output_menu_checkmarks()
+    
+    def update_audio_output_menu_checkmarks(self):
+        """Update checkmarks on audio output driver menu"""
+        if hasattr(self, 'audio_driver_menu'):
+            # Clear all checkmarks first
+            for i in range(4):  # 4 driver options
+                try:
+                    self.audio_driver_menu.entryconfig(i, label=self.audio_driver_menu.entrycget(i, 'label').replace('✓ ', ''))
+                except:
+                    pass
+            
+            # Add checkmark to current driver
+            driver_labels = {
+                'wasapi': '🎵 WASAPI (Best Quality)',
+                'directsound': '🔊 DirectSound (Streaming Friendly)',
+                'waveout': '📻 WaveOut (Most Compatible)',
+                'openal': '🌐 OpenAL (Cross-Platform)'
+            }
+            
+            if self.audio_output_driver in driver_labels:
+                for i in range(4):
+                    current_label = self.audio_driver_menu.entrycget(i, 'label').replace('✓ ', '')
+                    if current_label == driver_labels[self.audio_output_driver]:
+                        self.audio_driver_menu.entryconfig(i, label=f'✓ {current_label}')
+                        break
+    
     def show_font_size_dialog(self):
         """Show a dialog to adjust lyrics font size"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Lyrics Font Size")
         dialog.geometry("400x300")
-        dialog.configure(bg='#21262d')
+        
+        # Get current theme colors
+        current_theme = getattr(self, 'current_theme', 'dark')
+        if current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+            theme = PEACH_THEME
+            dialog_bg = theme['bg_header']
+            title_fg = theme['text_primary']
+            label_fg = theme['text_secondary']
+            size_fg = theme['primary']
+            scale_bg = theme['scale_bg']
+            scale_fg = theme['scale_fg']
+            scale_trough = theme['scale_trough']
+            scale_active = theme['scale_active']
+            scale_border = theme['scale_border']
+            apply_bg = theme['button_bg']
+            apply_fg = theme['button_fg']
+            apply_hover = theme['button_hover']
+            cancel_bg = theme['button_bg']
+            cancel_fg = theme['button_fg']
+            cancel_hover = theme['button_hover']
+        else:
+            # Dark theme colors
+            dialog_bg = '#21262d'
+            title_fg = '#f0f6fc'
+            label_fg = '#8b949e'
+            size_fg = '#58a6ff'
+            scale_bg = '#21262d'
+            scale_fg = '#f0f6fc'
+            scale_trough = '#30363d'
+            scale_active = '#58a6ff'
+            scale_border = '#21262d'
+            apply_bg = '#238636'
+            apply_fg = 'white'
+            apply_hover = '#2ea043'
+            cancel_bg = '#238636'
+            cancel_fg = 'white'
+            cancel_hover = '#2ea043'
+        
+        dialog.configure(bg=dialog_bg)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -1275,35 +1417,37 @@ class TinyTunez:
         # Title
         title_label = tk.Label(dialog, text="Adjust Lyrics Font Size", 
                               font=('Segoe UI', 12, 'bold'), 
-                              bg='#21262d', fg='#f0f6fc')
+                              bg=dialog_bg, fg=title_fg)
         title_label.pack(pady=20)
         
         # Current size display
-        size_frame = tk.Frame(dialog, bg='#21262d')
+        size_frame = tk.Frame(dialog, bg=dialog_bg)
         size_frame.pack(pady=10)
         
         tk.Label(size_frame, text="Current Size:", 
                 font=('Segoe UI', 10), 
-                bg='#21262d', fg='#8b949e').pack(side=tk.LEFT, padx=5)
+                bg=dialog_bg, fg=label_fg).pack(side=tk.LEFT, padx=5)
         
         size_label = tk.Label(size_frame, text=str(self.lyrics_font_size), 
                              font=('Segoe UI', 14, 'bold'), 
-                             bg='#21262d', fg='#58a6ff')
+                             bg=dialog_bg, fg=size_fg)
         size_label.pack(side=tk.LEFT)
         
         # Slider for font size
-        slider_frame = tk.Frame(dialog, bg='#21262d')
+        slider_frame = tk.Frame(dialog, bg=dialog_bg)
         slider_frame.pack(pady=20, padx=20, fill=tk.X)
         
         font_slider = tk.Scale(slider_frame, from_=8, to=24, orient=tk.HORIZONTAL,
-                              bg='#21262d', fg='#f0f6fc', troughcolor='#30363d',
-                              activebackground='#58a6ff', highlightthickness=0,
+                              bg=scale_bg, fg=scale_fg, troughcolor=scale_trough,
+                              activebackground=scale_active, highlightthickness=1,
+                              highlightbackground=scale_border, highlightcolor=scale_active,
+                              borderwidth=0, showvalue=False,
                               command=lambda v: size_label.config(text=str(int(float(v)))))
         font_slider.set(self.lyrics_font_size)
         font_slider.pack(fill=tk.X)
         
         # Buttons
-        button_frame = tk.Frame(dialog, bg='#21262d')
+        button_frame = tk.Frame(dialog, bg=dialog_bg)
         button_frame.pack(pady=20)
         
         def apply_font_size():
@@ -1312,13 +1456,13 @@ class TinyTunez:
             dialog.destroy()
         
         tk.Button(button_frame, text="Apply", command=apply_font_size,
-                 bg='#238636', fg='white', font=('Segoe UI', 10),
-                 activebackground='#2ea043', activeforeground='white',
+                 bg=apply_bg, fg=apply_fg, font=('Segoe UI', 10),
+                 activebackground=apply_hover, activeforeground=apply_fg,
                  borderwidth=0, padx=20).pack(side=tk.LEFT, padx=5)
         
         tk.Button(button_frame, text="Cancel", command=dialog.destroy,
-                 bg='#da3633', fg='white', font=('Segoe UI', 10),
-                 activebackground='#f85149', activeforeground='white',
+                 bg=cancel_bg, fg=cancel_fg, font=('Segoe UI', 10),
+                 activebackground=cancel_hover, activeforeground=cancel_fg,
                  borderwidth=0, padx=20).pack(side=tk.LEFT, padx=5)
     
     def load_audio_device_preference(self):
@@ -1416,7 +1560,7 @@ class TinyTunez:
             print("Detecting MPV-compatible audio devices...")
             
             # Create a temporary MPV instance to query devices
-            temp_player = mpv.MPV(ytdl=False, vo='null', ao='wasapi')
+            temp_player = mpv.MPV(ytdl=False, vo='null', ao=self.audio_output_driver)
             
             try:
                 # Try to get device list - this might not work on all MPV versions
@@ -1598,7 +1742,7 @@ class TinyTunez:
                     test_player = mpv.MPV(
                         ytdl=False, 
                         vo='null', 
-                        ao='wasapi',
+                        ao=self.audio_output_driver,
                         audio_device=device_name if device_name != 'auto' else None
                     )
                     
@@ -2332,7 +2476,7 @@ class TinyTunez:
             # Scrolling to the right (text moves left)
             if self.scroll_position >= max_scroll:
                 # Reached the end, pause and reverse
-                self.scroll_pause_counter = 18  # Pause for 18 cycles (3.6 seconds)
+                self.scroll_pause_counter = self.scroll_pause_duration  # Pause for 25 cycles (7.5 seconds)
                 self.scroll_direction = -1
                 # Don't update position this cycle, just pause
             else:
@@ -2341,7 +2485,7 @@ class TinyTunez:
             # Scrolling to the left (text moves right)
             if self.scroll_position <= 0:
                 # Reached the start, pause and reverse
-                self.scroll_pause_counter = 18  # Pause for 18 cycles (3.6 seconds)
+                self.scroll_pause_counter = self.scroll_pause_duration  # Pause for 25 cycles (7.5 seconds)
                 self.scroll_direction = 1
                 # Don't update position this cycle, just pause
             else:
@@ -5633,8 +5777,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def fetch_lyrics(self, song_path):
         """Fetch lyrics for the current song automatically."""
+        # Prevent duplicate lyrics searches
+        if self.lyrics_search_in_progress:
+            print("Lyrics search already in progress, skipping duplicate request")
+            return
+            
         # Fetch lyrics for current song
         try:
+            # Set flag to prevent duplicates
+            self.lyrics_search_in_progress = True
+            
             # Get song metadata
             metadata = self.get_song_metadata(song_path)
             # Metadata extracted successfully
@@ -5720,8 +5872,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Error fetching lyrics
             self.update_lyrics_display("Error loading lyrics")
             self.update_lyrics_status("-- Error")
-        
-        # Fetch lyrics completed
+        finally:
+            # Always reset the flag when done
+            self.lyrics_search_in_progress = False
     
     def get_lyrics_from_api(self, artist, title, song_path=None):
         """Get lyrics from LrcLib and lyrics.ovh based on user preference."""
@@ -5784,8 +5937,13 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     search_variations = [
                         (title, artist),  # Original
                         (title.split('(')[0].strip(), artist),  # Without parenthetical info
+                        (title.split('[')[0].strip(), artist),  # Without bracketed info
                         (title.replace('(Phones Re-Edit)', '').strip(), artist),  # Specific case
                         (title.replace('(Re-Edit)', '').strip(), artist),  # Generic re-edit
+                        (title.replace('[Radio Edit]', '').strip(), artist),  # Remove [Radio Edit]
+                        (title.replace('[Radio Edit]', '(Radio Edit)').strip(), artist),  # Convert [] to ()
+                        (title.replace('[', '(').replace(']', ')').strip(), artist),  # Convert all [] to ()
+                        (title.split('[')[0].strip().replace('(Radio Edit)', '(Radio Edit)'), artist),  # Remove brackets but keep parentheses
                     ]
                     
                     for search_title, search_artist in search_variations:
@@ -5885,8 +6043,13 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 search_variations = [
                     (title, artist),  # Original
                     (title.split('(')[0].strip(), artist),  # Without parenthetical info
+                    (title.split('[')[0].strip(), artist),  # Without bracketed info
                     (title.replace('(Phones Re-Edit)', '').strip(), artist),  # Specific case
                     (title.replace('(Re-Edit)', '').strip(), artist),  # Generic re-edit
+                    (title.replace('[Radio Edit]', '').strip(), artist),  # Remove [Radio Edit]
+                    (title.replace('[Radio Edit]', '(Radio Edit)').strip(), artist),  # Convert [] to ()
+                    (title.replace('[', '(').replace(']', ')').strip(), artist),  # Convert all [] to ()
+                    (title.split('[')[0].strip().replace('(Radio Edit)', '(Radio Edit)'), artist),  # Remove brackets but keep parentheses
                 ]
                 
                 for search_title, search_artist in search_variations:
@@ -6290,7 +6453,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.player = mpv.MPV(
                         ytdl=False, 
                         vo='null',  # No video output
-                        ao='wasapi'  # Windows Audio Session API
+                        ao=self.audio_output_driver  # Use selected audio output driver
                     )
                     self.player.volume = int(self.volume * 100) if hasattr(self, 'volume') else 70
                     
@@ -6734,14 +6897,24 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.root.after(100, update_time)
                     return
                 
-                # Get actual position from pygame mixer
+                # Get actual position from the correct audio source
                 try:
-                    pos_ms = pygame.mixer.music.get_pos()
-                    if pos_ms >= 0:
-                        self.current_time = pos_ms // 1000  # Convert to seconds
+                    if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                        # Use MPV for time tracking
+                        time_pos = self.player.time_pos
+                        if time_pos is not None and time_pos >= 0:
+                            self.current_time = time_pos
+                        else:
+                            # If MPV returns None or negative, song might have ended
+                            self.current_time = self.total_time + 1
                     else:
-                        # If get_pos() returns -1, song ended
-                        self.current_time = self.total_time + 1
+                        # Fallback to pygame mixer
+                        pos_ms = pygame.mixer.music.get_pos()
+                        if pos_ms >= 0:
+                            self.current_time = pos_ms // 1000  # Convert to seconds
+                        else:
+                            # If get_pos() returns -1, song ended
+                            self.current_time = self.total_time + 1
                 except:
                     pass
                 
@@ -7748,6 +7921,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def apply_peach_theme(self):
         """Apply peach theme to treeview and scrollbar only"""
+        # Prevent multiple simultaneous theme applications
+        if hasattr(self, 'applying_theme') and self.applying_theme:
+            return
+        self.applying_theme = True
+        
         if not PEACH_THEME_AVAILABLE:
             print("Peach theme not available, falling back to dark theme")
             self.apply_dark_theme()
@@ -7756,6 +7934,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             theme = PEACH_THEME
             self.current_theme = 'peach'
+            
+            # Disable widget updates to prevent flicker
+            self.root.config(cursor="watch")
             
             # ONLY apply ttk styles for treeview and scrollbar
             if hasattr(self, 'playlist_treeview'):
@@ -7907,6 +8088,12 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         except Exception as e:
             print(f"Error applying peach theme: {e}")
             self.apply_dark_theme()  # Fallback
+        finally:
+            # Reset theme application flag
+            self.applying_theme = False
+            # Restore normal cursor and force single update
+            self.root.config(cursor="")
+            self.root.update_idletasks()
     
     def apply_peach_playlist_header(self, theme):
         """Apply peach theme to header frame and its contents
@@ -8525,11 +8712,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def apply_dark_theme(self):
         """Apply TinyTunez dark theme (default) - comprehensive restoration"""
+        # Prevent multiple simultaneous theme applications
+        if hasattr(self, 'applying_theme') and self.applying_theme:
+            return
+        self.applying_theme = True
+        
         try:
             # Set current theme to dark
             self.current_theme = 'dark'
             
-            # Restore root window background first
+            # Disable widget updates to prevent flicker
+            self.root.config(cursor="watch")
+            
+            # Batch all updates together to reduce flicker
             self.root.configure(bg='#0d1117')
             
             # Apply dark scrollbar styling (this is the same as during initialization)
@@ -8639,6 +8834,12 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
         except Exception as e:
             print(f"Error applying dark theme: {e}")
+        finally:
+            # Reset theme application flag
+            self.applying_theme = False
+            # Restore normal cursor and force single update
+            self.root.config(cursor="")
+            self.root.update_idletasks()
     
     def restore_dark_playlist_header(self):
         """Restore dark theme to playlist header frame and all contents"""
