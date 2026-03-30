@@ -188,14 +188,11 @@ cover_cache/
 cover_cache.json
 audio_cache/
 last_played.json
-shuffle_state.json
-star_cache.json
-*.log
-debug_*.txt
 
 # User preferences - Keep local
 audio_device_config.txt
 lyrics_font_config.txt
+git_info.txt
 
 # Binary files
 *.dll
