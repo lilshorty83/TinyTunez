@@ -5138,6 +5138,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                              font=('Segoe UI', 10))
         
         # Add lyrics options
+        context_menu.add_command(label="🎤 Create Synced Lyrics", 
+                               command=lambda: self.show_synced_lyrics_editor(artist, title))
+        context_menu.add_separator()
         context_menu.add_command(label="🔍 Search LRCLib", 
                                command=lambda: self.search_lrclib_manual(artist, title))
         context_menu.add_command(label="🔍 Search AZLyrics", 
@@ -5403,6 +5406,361 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             return []
         
         return result
+    
+    def show_synced_lyrics_editor(self, artist, title):
+        """Show dialog for creating synced lyrics by timestamping existing lines."""
+        window_synced_editor = tk.Toplevel(self.root)
+        window_synced_editor.title(f"Create Synced Lyrics - {artist} - {title}")
+        window_synced_editor.geometry("900x800")
+        window_synced_editor.configure(bg='#0d1117')
+        window_synced_editor.transient(self.root)
+        window_synced_editor.grab_set()
+        
+        # Variables
+        current_time = tk.StringVar(value="00:00.00")
+        is_playing = tk.BooleanVar(value=False)
+        lyrics_lines = []  # List of (line_text, timestamp) tuples
+        current_line_index = tk.IntVar(value=0)
+        
+        # Title
+        title_label = tk.Label(window_synced_editor, text=f"Create Synced Lyrics: {artist} - {title}",
+                              font=('Segoe UI', 14, 'bold'), bg='#0d1117', fg='#f0f6fc')
+        title_label.pack(pady=10)
+        
+        # Instructions
+        instructions = tk.Label(window_synced_editor, 
+                              text="1. PASTE lyrics in the box below → then click '📝 Load Lyrics'\n"
+                              "2. Start playing the song with ▶️ Play\n"
+                              "3. Press SPACEBAR when you hear each line to timestamp it",
+                              font=('Segoe UI', 10), bg='#0d1117', fg='#8b949e', justify=tk.LEFT)
+        instructions.pack(pady=5)
+        
+        # Control panel
+        control_frame = tk.Frame(window_synced_editor, bg='#161b22')
+        control_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        # Time display
+        time_label = tk.Label(control_frame, textvariable=current_time, 
+                             font=('Courier New', 16, 'bold'), bg='#161b22', fg='#4a9eff')
+        time_label.pack(side=tk.LEFT, padx=10)
+        
+        # Control buttons
+        def toggle_play():
+            try:
+                # Check current button text to determine state
+                current_text = play_btn.cget("text")
+                print(f"toggle_play called. Button text = '{current_text}'")
+                
+                if hasattr(self, 'player') and self.player and not getattr(self, 'use_pygame_fallback', True):
+                    if current_text == "▶️ Play":
+                        # Start playing
+                        print("Changing to Play state")
+                        play_btn.config(text="⏸️ Pause")
+                        window_synced_editor.update_idletasks()
+                        
+                        # Get player time to decide if we resume or restart
+                        player_time = getattr(self.player, 'time_pos', 0)
+                        print(f"Player time before play: {player_time}")
+                        
+                        # Ensure player is unpaused before playing
+                        self.player.pause = False
+                        # Start playing
+                        self.player.play(self.current_song)
+                        print("Starting from beginning")
+                        
+                        update_time()
+                        
+                    elif current_text == "⏸️ Pause":
+                        # Pause playing
+                        print("Changing to Pause state")
+                        play_btn.config(text="▶️ Play")
+                        window_synced_editor.update_idletasks()
+                        
+                        # Use pause command
+                        self.player.pause = True
+                        try:
+                            self.player.command('set_property', 'pause', True)
+                        except:
+                            pass
+                        print("Paused playback")
+                        
+                else:
+                    messagebox.showerror("Error", "No audio player available")
+            except Exception as e:
+                print(f"Error in toggle_play: {e}")
+                # Reset state on error
+                play_btn.config(text="▶️ Play")
+                window_synced_editor.update_idletasks()
+        
+        def stop_song():
+            try:
+                play_btn.config(text="▶️ Play")
+                window_synced_editor.update_idletasks()
+                current_time.set("00:00.00")
+                if hasattr(self, 'player') and self.player and not getattr(self, 'use_pygame_fallback', True):
+                    # Stop playback and reset to beginning - use pause instead of stop
+                    self.player.pause = True
+                    self.player.seek(0, reference="absolute")
+                    print("Stopped playback and reset to beginning")
+            except Exception as e:
+                print(f"Error in stop_song: {e}")
+        
+        def timestamp_current_line():
+            """Timestamp the current line with the current playback time."""
+            if lyrics_lines and current_line_index.get() < len(lyrics_lines):
+                time_str = current_time.get()
+                line_idx = current_line_index.get()
+                # Update the timestamp for this line
+                line_text, _ = lyrics_lines[line_idx]
+                lyrics_lines[line_idx] = (line_text, time_str)
+                
+                # Move to next line
+                if line_idx + 1 < len(lyrics_lines):
+                    current_line_index.set(line_idx + 1)
+                else:
+                    # All lines timestamped
+                    messagebox.showinfo("Complete", "All lines have been timestamped!")
+                
+                update_lyrics_display()
+                highlight_current_line()  # Add this call
+        
+        def update_time():
+            if hasattr(self, 'player') and self.player and not getattr(self, 'use_pygame_fallback', True):
+                try:
+                    # Get current time position (always update, even if paused)
+                    time_pos = getattr(self.player, 'time_pos', None)
+                    if time_pos is not None:
+                        minutes = int(time_pos // 60)
+                        seconds = int(time_pos % 60)
+                        hundredths = int((time_pos % 1) * 100)
+                        current_time.set(f"{minutes:02d}:{seconds:02d}.{hundredths:02d}")
+                        
+                        # Check if song ended (only when playing)
+                        if is_playing.get():
+                            duration = getattr(self.player, 'duration', None)
+                            if duration and time_pos >= duration - 0.5:  # Near end
+                                is_playing.set(False)
+                                play_btn.config(text="▶️ Play")
+                                return
+                    else:
+                        # Song stopped or not playing
+                        if is_playing.get():
+                            is_playing.set(False)
+                            play_btn.config(text="▶️ Play")
+                except Exception as e:
+                    print(f"Error updating time: {e}")
+                    # Stop updating on error
+                    if is_playing.get():
+                        is_playing.set(False)
+                        play_btn.config(text="▶️ Play")
+                    return
+            
+            # Always continue updating (even when not playing to show current time)
+            window_synced_editor.after(100, update_time)
+        
+        play_btn = tk.Button(control_frame, text="▶️ Play", command=toggle_play,
+                           bg='#238636', fg='white', font=('Segoe UI', 10, 'bold'),
+                           padx=15, pady=5)
+        play_btn.pack(side=tk.LEFT, padx=5)
+        
+        stop_btn = tk.Button(control_frame, text="⏹️ Stop", command=stop_song,
+                           bg='#da3633', fg='white', font=('Segoe UI', 10, 'bold'),
+                           padx=15, pady=5)
+        stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Lyrics input area
+        input_frame = tk.Frame(window_synced_editor, bg='#0d1117')
+        input_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Label(input_frame, text="Paste lyrics here (one line per verse):", bg='#0d1117', fg='#f0f6fc',
+                font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        
+        # Text widget for lyrics input
+        lyrics_input = tk.Text(input_frame, bg='#161b22', fg='#f0f6fc', 
+                               font=('Segoe UI', 11), wrap=tk.WORD, height=8)
+        lyrics_input.pack(fill=tk.X, pady=5)
+        
+        def load_lyrics():
+            """Load lyrics from input into timestampable lines."""
+            input_text = lyrics_input.get("1.0", tk.END).strip()
+            if input_text:
+                # Split into lines and create list of (line_text, None) tuples
+                lines = input_text.split('\n')
+                lyrics_lines.clear()
+                for line in lines:
+                    line = line.strip()
+                    if line:  # Only add non-empty lines
+                        lyrics_lines.append((line, None))
+                
+                current_line_index.set(0)
+                update_lyrics_display()
+                highlight_current_line()
+                print(f"Loaded {len(lyrics_lines)} lines for timestamping")
+                
+                # Start time updates if not already running
+                if not is_playing.get():
+                    update_time()
+        
+        load_btn = tk.Button(input_frame, text="📝 Load Lyrics", command=load_lyrics,
+                           bg='#1f6feb', fg='white', font=('Segoe UI', 10, 'bold'),
+                           padx=15, pady=5)
+        load_btn.pack(anchor=tk.W, pady=5)
+        
+        # Lyrics display with highlighting
+        display_frame = tk.Frame(window_synced_editor, bg='#0d1117')
+        display_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        tk.Label(display_frame, text="Press SPACEBAR to timestamp each line:", bg='#0d1117', fg='#f0f6fc',
+                font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        
+        # Text widget for lyrics display with highlighting
+        lyrics_display = tk.Text(display_frame, bg='#161b22', fg='#f0f6fc', 
+                               font=('Courier New', 11), wrap=tk.WORD, height=15)
+        lyrics_display.pack(fill=tk.BOTH, expand=True)
+        
+        def update_lyrics_display():
+            lyrics_display.delete('1.0', tk.END)
+            if lyrics_lines:
+                # Format the lines for display
+                display_lines = []
+                for line_text, timestamp in lyrics_lines:
+                    if timestamp:
+                        display_lines.append(f"[{timestamp}] {line_text}")
+                    else:
+                        display_lines.append(line_text)
+                
+                lyrics_display.insert('1.0', '\n'.join(display_lines))
+                # Let highlight_current_line handle scrolling
+        
+        def highlight_current_line():
+            """Highlight the current line that needs timestamping."""
+            lyrics_display.tag_remove('current_line', '1.0', tk.END)
+            lyrics_display.tag_remove('completed', '1.0', tk.END)
+            
+            # Highlight completed lines
+            for i, (_, timestamp) in enumerate(lyrics_lines):
+                if timestamp:
+                    start_idx = f"{i+1}.0"
+                    end_idx = f"{i+1}.end"
+                    lyrics_display.tag_add('completed', start_idx, end_idx)
+            
+            # Highlight current line and scroll to it
+            if current_line_index.get() < len(lyrics_lines):
+                line_num = current_line_index.get() + 1
+                start_idx = f"{line_num}.0"
+                end_idx = f"{line_num}.end"
+                lyrics_display.tag_add('current_line', start_idx, end_idx)
+                # Scroll to the current line instead of the end
+                lyrics_display.see(start_idx)
+        
+        # Configure tags for highlighting
+        lyrics_display.tag_config('current_line', background='#1f6feb', foreground='white')
+        lyrics_display.tag_config('completed', background='#0d1117', foreground='#8b949e')
+        
+        # Buttons frame
+        button_frame = tk.Frame(window_synced_editor, bg='#0d1117')
+        button_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        def save_synced_lyrics():
+            if lyrics_lines and any(timestamp for _, timestamp in lyrics_lines):
+                # Create synced lyrics text
+                synced_lines = []
+                for line_text, timestamp in lyrics_lines:
+                    if timestamp:
+                        synced_lines.append(f"[{timestamp}] {line_text}")
+                    else:
+                        # Include lines without timestamps as plain text
+                        synced_lines.append(line_text)
+                
+                synced_text = '\n'.join(synced_lines)
+                # Add metadata header
+                final_lyrics = f"[ar:{artist}]\n[ti:{title}]\n[offset:0]\n{synced_text}"
+                
+                # Save using existing cache system
+                self.cache_lyrics(artist, title, final_lyrics)
+                
+                # Also save as .lrc file in the song folder
+                if hasattr(self, 'current_song') and self.current_song:
+                    try:
+                        import os
+                        song_path = Path(self.current_song)
+                        lrc_path = song_path.with_suffix('.lrc')
+                        
+                        # Write the .lrc file
+                        with open(lrc_path, 'w', encoding='utf-8') as f:
+                            f.write(final_lyrics)
+                        
+                        print(f"Saved lyrics file: {lrc_path}")
+                    except Exception as e:
+                        print(f"Error saving .lrc file: {e}")
+                
+                # Update display
+                self.display_synced_lyrics(final_lyrics, "User Created", artist, title)
+                self.update_lyrics_status("-- User Created")
+                
+                messagebox.showinfo("Success", "Synced lyrics saved successfully!\n(.lrc file created in song folder)")
+                window_synced_editor.destroy()
+            else:
+                messagebox.showwarning("No Timestamps", "Please add at least one timestamp before saving.")
+        
+        def clear_timestamps():
+            """Clear only timestamps, keep the lyrics text."""
+            if lyrics_lines:
+                # Clear all timestamps but keep the text
+                for i in range(len(lyrics_lines)):
+                    line_text, _ = lyrics_lines[i]
+                    lyrics_lines[i] = (line_text, None)
+                
+                current_line_index.set(0)
+                update_lyrics_display()
+                highlight_current_line()
+                print("Cleared all timestamps")
+        
+        def clear_all():
+            if lyrics_lines and messagebox.askyesno("Clear All", "Clear all lyrics and start over?"):
+                lyrics_lines.clear()
+                current_line_index.set(0)
+                lyrics_input.delete('1.0', tk.END)
+                update_lyrics_display()
+        
+        # Buttons
+        save_btn = tk.Button(button_frame, text="💾 Save Lyrics", command=save_synced_lyrics,
+                           bg='#238636', fg='white', font=('Segoe UI', 9, 'bold'),
+                           padx=12, pady=6)
+        save_btn.pack(side=tk.LEFT, padx=5)
+        
+        clear_ts_btn = tk.Button(button_frame, text="🔄 Clear Timestamps", command=clear_timestamps,
+                               bg='#f85149', fg='white', font=('Segoe UI', 9, 'bold'),
+                               padx=12, pady=6)
+        clear_ts_btn.pack(side=tk.LEFT, padx=5)
+        
+        clear_btn = tk.Button(button_frame, text="🗑️ Clear All", command=clear_all,
+                            bg='#da3633', fg='white', font=('Segoe UI', 9, 'bold'),
+                            padx=12, pady=6)
+        clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        cancel_btn = tk.Button(button_frame, text="❌ Cancel", command=window_synced_editor.destroy,
+                             bg='#6e7681', fg='white', font=('Segoe UI', 9, 'bold'),
+                             padx=12, pady=6)
+        cancel_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Keyboard shortcuts - prevent space from typing in input boxes
+        window_synced_editor.bind('<space>', lambda e: timestamp_current_line())
+        window_synced_editor.bind('<Return>', lambda e: timestamp_current_line())
+        
+        # Prevent space from typing in lyrics input when it's focused
+        def prevent_space_in_input(event):
+            if event.keysym == 'space':
+                timestamp_current_line()
+                return 'break'  # Prevent the space from being typed
+            return None
+        
+        lyrics_input.bind('<space>', prevent_space_in_input)
+        
+        # Focus on lyrics input
+        lyrics_input.focus()
+        
+        window_synced_editor.wait_window()
     
     def convert_lrc_to_plain(self, lrc_text):
         """Convert LRC format to plain text by removing timestamps."""
@@ -5848,6 +6206,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # No lyrics found from APIs
                     self.update_lyrics_display(f"No lyrics found for:\n\n{artist} - {title}\n\n"
                                              f"Right-click the song and select:\n"
+                                             f"• 🎤 Create Synced Lyrics\n"
                                              f"• 🔍 Search LRCLib\n"
                                              f"• 🔍 Search AZLyrics\n"
                                              f"• 🔍 Search Genius\n"
@@ -6337,9 +6696,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Preload audio analysis when song is selected (not when played)
             def preload_audio_analysis():
                 self.load_audio_for_analysis(self.current_song)
-                # Don't start visualization here - it will be started after cleanup
-                # Start analysis in background
-                self.start_audio_analysis()
+                # Don't start analysis here - it will be started when song actually plays
             
             threading.Thread(target=preload_audio_analysis, daemon=True).start()
             
@@ -6412,6 +6769,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 
                 # Save the last played song
                 self.save_last_played_song(song_path, metadata)
+                
+                # Set song start time for robust end detection
+                self._song_start_time = time.time()
                 
                 # Start time tracking
                 self.start_time_tracking()
@@ -6905,16 +7265,27 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         if time_pos is not None and time_pos >= 0:
                             self.current_time = time_pos
                         else:
-                            # If MPV returns None or negative, song might have ended
-                            self.current_time = self.total_time + 1
+                            # If MPV returns None or negative, don't assume song ended
+                            # It might be buffering or starting up. Only check for end if we've been playing for a while.
+                            if hasattr(self, '_song_start_time') and (time.time() - self._song_start_time) > 3:
+                                # Only assume song ended if it's been playing for at least 3 seconds
+                                self.current_time = self.total_time + 1
+                            else:
+                                # Otherwise, keep current time and wait
+                                pass
                     else:
                         # Fallback to pygame mixer
                         pos_ms = pygame.mixer.music.get_pos()
                         if pos_ms >= 0:
                             self.current_time = pos_ms // 1000  # Convert to seconds
                         else:
-                            # If get_pos() returns -1, song ended
-                            self.current_time = self.total_time + 1
+                            # If get_pos() returns -1, don't assume song ended immediately
+                            if hasattr(self, '_song_start_time') and (time.time() - self._song_start_time) > 3:
+                                # Only assume song ended if it's been playing for at least 3 seconds
+                                self.current_time = self.total_time + 1
+                            else:
+                                # Otherwise, keep current time and wait
+                                pass
                 except:
                     pass
                 
@@ -6941,9 +7312,68 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             print(f"Audio already loaded for {audio_file}, skipping reload")
             return
         
+        # Check if loading is already in progress for the same file
+        if hasattr(self, '_loading_audio') and self._loading_audio and hasattr(self, '_loading_file') and self._loading_file == audio_file:
+            print("Audio loading already in progress for this file, waiting...")
+            # Wait a moment for the other thread to finish
+            import time
+            for _ in range(50):  # Wait up to 5 seconds
+                time.sleep(0.1)
+                if not self._loading_audio or self.current_audio_samples is not None:
+                    break
+            # Check if audio is loaded now
+            if self.current_audio_samples is not None and self.current_audio_file == audio_file:
+                print("Audio loading completed by other thread")
+                return
+        
         try:
+            # Set loading flags
+            self._loading_audio = True
+            self._loading_file = audio_file
+            
             # Load audio file using librosa for analysis
-            self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=22050, mono=True)
+            try:
+                # Try loading with librosa (which uses soundfile) with different parameters
+                self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=22050, mono=True, res_type='kaiser_best')
+            except Exception as e:
+                print(f"librosa failed to load audio with kaiser_best: {e}")
+                try:
+                    # Try with different resampling method
+                    self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=22050, mono=True, res_type='linear')
+                except Exception as e2:
+                    print(f"librosa failed with linear resampling: {e2}")
+                    try:
+                        # Fallback: try loading with audioread directly
+                        import audioread
+                        with audioread.audio_open(audio_file) as af:
+                            # Read audio data
+                            total_frames = int(af.duration * af.samplerate)
+                            audio_data = np.zeros((total_frames,), dtype=np.float32)
+                            
+                            # Read in chunks
+                            chunk_size = 4096
+                            offset = 0
+                            for chunk in af:
+                                chunk_data = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                                end = min(offset + len(chunk_data), total_frames)
+                                audio_data[offset:end] = chunk_data[:end-offset]
+                                offset = end
+                            
+                            # Resample to 22050 Hz if needed
+                            if af.samplerate != 22050:
+                                import librosa
+                                self.current_audio_samples = librosa.resample(audio_data, orig_sr=af.samplerate, target_sr=22050)
+                                self.audio_sample_rate = 22050
+                            else:
+                                self.current_audio_samples = audio_data
+                                self.audio_sample_rate = af.samplerate
+                                
+                    except Exception as e3:
+                        print(f"Fallback audio loading also failed: {e3}")
+                        # Last resort: create dummy audio data
+                        self.current_audio_samples = np.zeros(22050 * 10, dtype=np.float32)  # 10 seconds of silence
+                        self.audio_sample_rate = 22050
+                        print("Using dummy audio data for visualization")
             self.audio_duration = len(self.current_audio_samples) / self.audio_sample_rate
             self.current_audio_file = audio_file
             print(f"Audio loaded for analysis: {self.audio_duration:.2f}s at {self.audio_sample_rate}Hz")
@@ -6953,12 +7383,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 pygame.mixer.music.load(audio_file)
             except Exception as e:
                 print(f"Pygame mixer load failed: {e}")
-                    
+                
         except Exception as e:
             print(f"Error loading audio for analysis: {e}")
             self.current_audio_samples = None
             self.audio_sample_rate = 22050
             self.audio_duration = 0
+        finally:
+            # Clear loading flags
+            self._loading_audio = False
+            self._loading_file = None
     
     def start_audio_analysis(self):
         """Start thread to analyze real audio data for visualization"""
