@@ -188,17 +188,32 @@ cover_cache/
 cover_cache.json
 audio_cache/
 last_played.json
+star_cache.json
+screenshots/
 
 # User preferences - Keep local
 audio_device_config.txt
+audio_output_driver_config.txt
 lyrics_font_config.txt
 git_info.txt
+viz_preferences.json
+viz_multi.py
+winamp_optimized.json
+shuffle_state.json
 
 # Binary files
 *.dll
 *.exe
 *.so
 *.dylib
+innosetup.exe
+
+# Installer
+installer/
+TinyTunez.iss
+
+# VS Code workspace
+*.code-workspace
 
 # Test files
 test_*.py
