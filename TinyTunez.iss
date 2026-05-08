@@ -17,7 +17,7 @@ AllowNoIcons=yes
 LicenseFile=LICENSE.txt
 OutputDir=installer
 OutputBaseFilename=TinyTunez-Setup
-SetupIconFile=assets\icon.ico
+SetupIconFile=assets\music.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -38,9 +38,9 @@ Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\TinyTunez"; Filename: "{app}\TinyTunez.exe"; IconFilename: "{app}\assets\icon.ico"; WorkingDir: "{app}"
+Name: "{group}\TinyTunez"; Filename: "{app}\TinyTunez.exe"; IconFilename: "{app}\assets\music.ico"; WorkingDir: "{app}"
 Name: "{group}\Uninstall TinyTunez"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\TinyTunez"; Filename: "{app}\TinyTunez.exe"; IconFilename: "{app}\assets\icon.ico"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userdesktop}\TinyTunez"; Filename: "{app}\TinyTunez.exe"; IconFilename: "{app}\assets\music.ico"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\TinyTunez.exe"; Description: "{cm:LaunchProgram,TinyTunez}"; Flags: nowait postinstall skipifsilent
