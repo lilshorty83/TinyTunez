@@ -2984,9 +2984,9 @@ class TinyTunez:
         self.clear_search_canvas.create_text(8, 8, text="✕", font=('Segoe UI', 8, 'bold'), fill='#f0f6fc')
     
     def set_window_icon(self, window):
-        """Set the window icon to music note for a given window."""
+        """Set the window icon to quill icon for a given window."""
         try:
-            icon_path = os.path.join(self.assets_dir, "music.ico")
+            icon_path = os.path.join(self.assets_dir, "icon.ico")
             if os.path.exists(icon_path):
                 # Try iconbitmap first (Windows)
                 try:
@@ -3002,6 +3002,260 @@ class TinyTunez:
                         pass
         except Exception as e:
             pass  # Ignore if icon file not found or error occurs
+
+    def download_update(self, download_url, dialog_window):
+        """Download the update installer automatically."""
+        import urllib.request
+        import webbrowser
+        import tempfile
+        import shutil
+        
+        # Close the update dialog
+        dialog_window.destroy()
+        
+        # If download_url is the release page (not the actual installer), open in browser
+        if 'github.com' in download_url and not download_url.endswith('.exe'):
+            webbrowser.open(download_url)
+            return
+        
+        # Show download progress dialog
+        download_dialog = tk.Toplevel(self.root)
+        download_dialog.title("Downloading Update")
+        download_dialog.geometry("400x150")
+        download_dialog.resizable(False, False)
+        self.set_window_icon(download_dialog)
+        
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+        
+        download_dialog.configure(bg=bg_color)
+        
+        # Center the dialog
+        download_dialog.transient(self.root)
+        download_dialog.grab_set()
+        
+        main_frame = tk.Frame(download_dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Message label
+        message_label = tk.Label(
+            main_frame,
+            text="Downloading update...",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg=fg_color
+        )
+        message_label.pack(expand=True)
+        
+        # Progress bar
+        progress = ttk.Progressbar(main_frame, length=300, mode='determinate')
+        progress.pack(pady=10)
+        
+        # Center the dialog
+        download_dialog.update_idletasks()
+        x = (download_dialog.winfo_screenwidth() // 2) - (download_dialog.winfo_width() // 2)
+        y = (download_dialog.winfo_screenheight() // 2) - (download_dialog.winfo_height() // 2)
+        download_dialog.geometry(f"+{x}+{y}")
+        
+        def download_file():
+            try:
+                # Get the Downloads folder
+                downloads_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
+                
+                # Download to temporary file first
+                with urllib.request.urlopen(download_url, timeout=30) as response:
+                    file_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    chunk_size = 8192
+                    
+                    # Create temporary file
+                    temp_path = os.path.join(tempfile.gettempdir(), 'TinyTunez-Setup.exe')
+                    
+                    with open(temp_path, 'wb') as f:
+                        while True:
+                            chunk = response.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Update progress bar
+                            if file_size > 0:
+                                progress['value'] = (downloaded / file_size) * 100
+                                download_dialog.update()
+                
+                # Move to Downloads folder
+                final_path = os.path.join(downloads_folder, 'TinyTunez-Setup.exe')
+                shutil.move(temp_path, final_path)
+                
+                # Close download dialog
+                download_dialog.destroy()
+                
+                # Show success dialog with option to run installer
+                self.show_download_success_dialog(final_path)
+                
+            except Exception as e:
+                download_dialog.destroy()
+                self.show_download_error_dialog(str(e))
+        
+        # Start download in background
+        self.root.after(100, download_file)
+
+    def show_download_success_dialog(self, file_path):
+        """Show dialog when download is successful."""
+        import subprocess
+        
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Download Complete")
+        dialog.geometry("400x180")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+        self.set_window_icon(dialog)
+        
+        # Center the dialog
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Message
+        message_label = tk.Label(
+            main_frame,
+            text="Update downloaded successfully!\n\nSaved to Downloads folder",
+            font=('Segoe UI', 11),
+            bg=bg_color,
+            fg='#4CAF50',
+            justify=tk.CENTER
+        )
+        message_label.pack(expand=True)
+        
+        # Buttons frame
+        button_frame = tk.Frame(main_frame, bg=bg_color)
+        button_frame.pack()
+        
+        # Run installer button
+        run_button = tk.Button(
+            button_frame,
+            text="Run Installer",
+            font=('Segoe UI', 10),
+            bg='#4CAF50',
+            fg='white',
+            activebackground='#45a049',
+            activeforeground='white',
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=8,
+            command=lambda: [subprocess.Popen(file_path), dialog.destroy()]
+        )
+        run_button.pack(side=tk.LEFT, padx=5)
+        
+        # Close button
+        close_button = tk.Button(
+            button_frame,
+            text="Close",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=8,
+            command=dialog.destroy
+        )
+        close_button.pack(side=tk.LEFT, padx=5)
+        
+        # Center window on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+    def show_download_error_dialog(self, error_message):
+        """Show dialog when download fails."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Download Failed")
+        dialog.geometry("400x150")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+        self.set_window_icon(dialog)
+        
+        # Center the dialog
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Message
+        message_label = tk.Label(
+            main_frame,
+            text="Failed to download update.\n\nPlease check your internet connection.",
+            font=('Segoe UI', 11),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER
+        )
+        message_label.pack(expand=True)
+        
+        # Close button
+        close_button = tk.Button(
+            main_frame,
+            text="OK",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=8,
+            command=dialog.destroy
+        )
+        close_button.pack(pady=(10, 0))
+        
+        # Center window on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height // 2)
+        dialog.geometry(f"+{x}+{y}")
 
     def load_star_icons(self):
         """Load star icons from assets folder."""
@@ -9597,7 +9851,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     data = json.loads(response.read().decode())
                     latest_version = data['tag_name'].lstrip('v')
                     release_notes = data.get('body', 'No release notes available.')
-                    download_url = data.get('html_url', '')
+                    # Get the actual download URL for the installer
+                    assets = data.get('assets', [])
+                    download_url = ''
+                    for asset in assets:
+                        if 'TinyTunez-Setup.exe' in asset.get('name', ''):
+                            download_url = asset.get('browser_download_url', '')
+                            break
+                    # Fallback to release page if no installer found
+                    if not download_url:
+                        download_url = data.get('html_url', '')
 
                 checking_window.destroy()
 
@@ -9713,7 +9976,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             borderwidth=0,
             padx=15,
             pady=8,
-            command=lambda: webbrowser.open(download_url)
+            command=lambda: self.download_update(download_url, update_window)
         )
         download_button.pack(side=tk.LEFT, padx=5)
 
@@ -9917,7 +10180,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     data = json.loads(response.read().decode())
                     latest_version = data['tag_name'].lstrip('v')
                     release_notes = data.get('body', 'No release notes available.')
-                    download_url = data.get('html_url', '')
+                    # Get the actual download URL for the installer
+                    assets = data.get('assets', [])
+                    download_url = ''
+                    for asset in assets:
+                        if 'TinyTunez-Setup.exe' in asset.get('name', ''):
+                            download_url = asset.get('browser_download_url', '')
+                            break
+                    # Fallback to release page if no installer found
+                    if not download_url:
+                        download_url = data.get('html_url', '')
 
                 checking_window.destroy()
 
@@ -10033,7 +10305,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             borderwidth=0,
             padx=15,
             pady=8,
-            command=lambda: webbrowser.open(download_url)
+            command=lambda: self.download_update(download_url, update_window)
         )
         download_button.pack(side=tk.LEFT, padx=5)
 
