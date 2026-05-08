@@ -70,14 +70,14 @@ A modern, feature-rich music player for Windows with beautiful themes, lyrics di
 - **Beautiful UI**: Modern, clean interface with smooth transitions
 
 ### Keyboard Shortcuts
-- **Space**: Play/Pause
-- **→**: Next Track
-- **←**: Previous Track
-- **↑/↓**: Volume Up/Down
-- **M**: Mute/Unmute
-- **Ctrl+F**: Search/Filter playlist
-- **Ctrl+O**: Open file dialog
-- **Escape**: Close dialogs
+- **Z**: Previous song
+- **X**: Play
+- **C**: Pause
+- **V**: Stop
+- **B**: Next song
+- **S**: Toggle shuffle
+- **Up Arrow**: Volume up (5% increments)
+- **Down Arrow**: Volume down (5% increments)
 
 ## 📁 Supported Formats
 
@@ -147,6 +147,7 @@ TinyTunez/
 ## 🔄 Updates & Support
 
 ### Version History
+- **v1.1.0**: Winamp-style shuffle navigation, bug fixes
 - **v3.0**: Peach theme, persistent settings, improved lyrics
 - **v2.0**: Audio visualization, album art, keyboard shortcuts
 - **v1.0**: Basic music player functionality

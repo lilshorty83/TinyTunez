@@ -10,9 +10,11 @@ from PIL import Image, ImageTk
 import mutagen
 import json
 import pygame
+import pygame.mixer
 import math
 import numpy as np
 import librosa
+import hashlib
 
 # Import peach theme
 try:
@@ -25,6 +27,21 @@ except ImportError:
 # Add the directory containing the script to the PATH environment variable
 # This ensures python-mpv can find the DLLs in the script's local directory
 os.environ["PATH"] = os.path.dirname(os.path.abspath(__file__)) + os.pathsep + os.environ["PATH"]
+
+def get_app_data_dir():
+    """Get the AppData directory for TinyTunez cache and settings."""
+    if platform.system() == "Windows":
+        app_data = os.environ.get('APPDATA', os.path.expanduser('~'))
+    else:
+        app_data = os.path.expanduser('~')
+    
+    tinytunez_dir = os.path.join(app_data, 'TinyTunez')
+    
+    # Create directory if it doesn't exist
+    if not os.path.exists(tinytunez_dir):
+        os.makedirs(tinytunez_dir)
+    
+    return tinytunez_dir
 
 # Try to import mpv, but don't fail if it's not available
 try:
@@ -39,7 +56,7 @@ except (ImportError, OSError) as e:
 try:
     import sounddevice
     SOUNDDEVICE_AVAILABLE = True
-    print("SoundDevice library available for audio device detection")
+    # print("SoundDevice library available for audio device detection")
 except ImportError:
     SOUNDDEVICE_AVAILABLE = False
     print("SoundDevice not available - install with: pip install sounddevice")
@@ -213,7 +230,8 @@ class TinyTunez:
         self.lyrics_timer = None  # Timer for karaoke updates
         
         # Star cache for lyrics
-        self.star_cache_file = "star_cache.json"
+        app_data_dir = get_app_data_dir()
+        self.star_cache_file = os.path.join(app_data_dir, "star_cache.json")
         self.star_cache = self.load_star_cache()
         
         # Debounced playlist save timer
@@ -232,13 +250,17 @@ class TinyTunez:
         self.scroll_speed = 250  # milliseconds between scroll updates (balanced speed)
         self.scroll_pause_duration = 25  # Pause duration in cycles (7.5 seconds at 300ms)
         
-        # Last played song tracking
-        self.last_played_file = "last_played.json"
+        # Thread lock for playlist operations
+        self.playlist_lock = threading.Lock()
+        
+        # Last played song
+        app_data_dir = get_app_data_dir()
+        self.last_played_file = os.path.join(app_data_dir, "last_played.json")
         self.last_played_song = self.load_last_played_song()
         
         # Album cover cache
-        self.cover_cache_dir = "cover_cache"
-        self.cover_cache_file = "cover_cache.json"
+        self.cover_cache_dir = os.path.join(app_data_dir, "cover_cache")
+        self.cover_cache_file = os.path.join(app_data_dir, "cover_cache.json")
         self.cover_cache = self.load_cover_cache()
         self.ensure_cover_cache_dir()
         
@@ -257,8 +279,9 @@ class TinyTunez:
         
         # Asset paths
         self.assets_dir = "assets"
-        self.playlist_file = "playlist.json"
-        self.settings_file = "settings.json"
+        app_data_dir = get_app_data_dir()
+        self.playlist_file = os.path.join(app_data_dir, "playlist.json")
+        self.settings_file = os.path.join(app_data_dir, "settings.json")
         
         # Settings
         self.settings = self.load_settings()
@@ -288,6 +311,43 @@ class TinyTunez:
         self.audio_sample_rate = 44100  # Default sample rate
         self.audio_duration = None
         self.sample_position = 0
+        
+        # STFT data for viz_multi.py style visualization
+        self.stft_data = None
+        self.stft_hop_length = None
+        self.stft_sample_rate = None
+        
+        # Visualization parameters (EXACT viz_multi.py defaults)
+        self.viz_gain = 1.2                      # viz_multi.py default
+        self.viz_attack = 0.35                   # viz_multi.py default
+        self.viz_decay = 0.75                    # Faster decay for bars to hit bottom
+        self.viz_peak_hold_time = 30             # viz_multi.py default (frames)
+        self.viz_peak_decay = 0.95               # viz_multi.py default
+        self.viz_peaks_enabled = True            # viz_multi.py default
+        self.viz_num_bars = 32                   # viz_multi.py default
+        self.viz_freq_scale_log = False          # viz_multi.py default (linear)
+        self.viz_log_amplitude_db = -60.0        # viz_multi.py default
+        self.viz_framerate = 35                  # viz_multi.py default
+        self.viz_bar_spacing = 2                 # User preference (viz_multi default is 1)
+        self.viz_bar_width = "Thick"             # viz_multi.py default
+        self.viz_segment_height = 2              # viz_multi.py default
+        self.viz_falloff_accel = 1.05            # viz_multi.py default
+        self.viz_eq_type = "Constant-Q"          # viz_multi.py default
+        self.viz_band_spacing = "Winamp Style"   # viz_multi.py default
+        self.viz_fft_windowing = "Hann"          # viz_multi.py default
+        self.viz_beat_sensitivity = 1.2          # viz_multi.py default
+        self.viz_timer_resolution = 33           # viz_multi.py default (ms)
+        self.viz_freq_range_min = 20             # viz_multi.py default (Hz)
+        self.viz_freq_range_max = 20000          # viz_multi.py default (Hz)
+        self.viz_spectrum_tilt = 3.0             # viz_multi.py default (dB/Oct)
+        self.viz_decoder_eq = "Logarithmic"      # viz_multi.py default
+        self.viz_eq_hump = 6.0                   # viz_multi.py default (dB)
+        self.viz_hump_center = 1500              # viz_multi.py default (Hz)
+        self.viz_quality = "Full"                # viz_multi.py default
+        self.viz_fft_size = 2048                 # viz_multi.py default
+        self.viz_use_limiter = True              # viz_multi.py default (soft knee)
+        self.viz_limiter_threshold_db = -0.3     # viz_multi.py default
+        self.viz_peak_hold_counters = []
         
         # Audio device tracking
         self.current_audio_device = None  # Will be set to first available device
@@ -330,7 +390,7 @@ class TinyTunez:
                 try:
                     # Initialize MPV with saved audio device or default
                     if hasattr(self, 'current_audio_device') and self.current_audio_device:
-                        print(f"Initializing MPV with saved device: {self.current_audio_device}")
+                        # print(f"Initializing MPV with saved device: {self.current_audio_device}")
                         if self.current_audio_device == 'auto':
                             self.player = mpv.MPV(
                                 ytdl=False, 
@@ -362,7 +422,7 @@ class TinyTunez:
                     
                     self.use_pygame_fallback = False
                     device_used = getattr(self, 'current_audio_device', 'default')
-                    print(f"MPV initialized successfully with device: {device_used}")
+                    # print(f"MPV initialized successfully with device: {device_used}")
                 except Exception as e:
                     print(f"Failed to initialize MPV with saved device: {e}")
                     self.use_pygame_fallback = True
@@ -379,6 +439,9 @@ class TinyTunez:
         # Create GUI first
         self.create_widgets()
         
+        # Setup keyboard shortcuts
+        self.setup_keyboard_shortcuts()
+        
         # Load saved playlist after GUI is created
         self.load_playlist()
         
@@ -391,6 +454,9 @@ class TinyTunez:
         # Apply UI debugging if it was previously enabled
         if self.settings.get('ui_debug_enabled', False):
             self.root.after(400, self.enable_ui_debug_tooltips)
+        
+        # Check and show help/tips window on first install or update
+        self.root.after(500, self.check_and_show_help_on_startup)
         
         # Window is already centered during initialization, no need to delay
     
@@ -733,6 +799,32 @@ class TinyTunez:
         )
         self.visualization_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
+        # Add context menu to visualization canvas
+        # Load visualization preferences from file (or use defaults)
+        self.viz_theme = "basic"  # Default theme: basic (non-segmented)
+        self.viz_color_scheme = "green"  # Default color scheme: green
+        self.load_viz_preferences()
+        
+        self.viz_context_menu = tk.Menu(self.root, tearoff=0)
+        self.viz_context_menu.add_command(label="Bar Style: Basic (Non-segmented)", command=lambda: self.set_viz_theme("basic"))
+        self.viz_context_menu.add_command(label="Bar Style: Segmented (LED-style)", command=lambda: self.set_viz_theme("segmented"))
+        self.viz_context_menu.add_separator()
+        self.viz_context_menu.add_command(label="Color: Green", command=lambda: self.set_viz_color("green"))
+        self.viz_context_menu.add_command(label="Color: Green-Yellow-Red", command=lambda: self.set_viz_color("green-yellow-red"))
+        self.viz_context_menu.add_command(label="Color: Fire", command=lambda: self.set_viz_color("fire"))
+        
+        # Apply theme to context menu
+        self.update_viz_context_menu_theme()
+        
+        def show_viz_context_menu(event):
+            self.update_viz_context_menu_checkmarks()
+            self.viz_context_menu.post(event.x_root, event.y_root)
+        
+        self.visualization_canvas.bind("<Button-3>", show_viz_context_menu)
+        
+        # Initialize visualization bars immediately (no delay) to reduce first-song delay
+        self.root.after(0, self.init_visualization_bars)
+        
         # Progress bar placeholder
         frame_progress_bar = ModernFrame(frame_song_info_content, bg='#161b22', name='progress_frame')
         frame_progress_bar.pack(fill=tk.X, pady=(10, 0))
@@ -994,6 +1086,7 @@ class TinyTunez:
                         activebackground=active_bg, activeforeground=active_fg,
                         font=('Segoe UI', 10))
         menubar.add_cascade(label="❓ Help", menu=help_menu)
+        help_menu.add_command(label="💡 Help & Tips", command=self.show_help_tips)
         help_menu.add_command(label="ℹ️ About", command=self.show_about)
         
     def recreate_menu_bar(self):
@@ -1028,7 +1121,7 @@ class TinyTunez:
                     command=switch_to_device
                 )
             
-            print(f"Added {len(devices)} devices to audio menu")
+            # print(f"Added {len(devices)} devices to audio menu}")
             
         except Exception as e:
             print(f"Error populating audio device menu: {e}")
@@ -1148,9 +1241,13 @@ class TinyTunez:
                 if current_position and current_position > 0:
                     # Resume playing and seek to saved position
                     self.root.after(500, lambda: self.resume_song_at_position(current_position))
+                    # Restart audio analysis after song is resumed
+                    self.root.after(600, self.restart_audio_analysis)
                 else:
                     # Just resume playing from start
                     self.root.after(500, self.resume_current_song)
+                    # Restart audio analysis after song is resumed
+                    self.root.after(600, self.restart_audio_analysis)
             
             return True
             
@@ -1163,6 +1260,31 @@ class TinyTunez:
         try:
             print(f"Reinitializing MPV with device: {device_name}")
             
+            # Try to change audio device dynamically without reinitializing
+            if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
+                try:
+                    if device_name != 'auto':
+                        # Try multiple methods to change audio device dynamically
+                        # Method 1: Try using property assignment
+                        try:
+                            self.player.audio_device = device_name
+                            self.player.volume = int(self.volume * 100)
+                            print(f"Audio device changed dynamically via property to: {device_name}")
+                            return True
+                        except Exception as e1:
+                            print(f"Failed to change audio device via property: {e1}")
+                            # Method 2: Try using command
+                            try:
+                                self.player.command('set_property', 'audio-device', device_name)
+                                self.player.volume = int(self.volume * 100)
+                                print(f"Audio device changed dynamically via command to: {device_name}")
+                                return True
+                            except Exception as e2:
+                                print(f"Failed to change audio device via command: {e2}")
+                except Exception as e:
+                    print(f"Failed to change audio device dynamically: {e}")
+            
+            # Fallback: reinitialize MPV with new device
             # Cleanup existing player
             if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
                 try:
@@ -1188,17 +1310,14 @@ class TinyTunez:
                             audio_device=device_name
                         )
                     
-                    self.player.volume = 70  # Set initial volume
-                    self.player.keep_open = 'no'
-                    self.player.loop = 'no'
+                    self.player.volume = int(self.volume * 100)  # Use saved volume
+                    # Set keep_open and loop to prevent auto-advance during device switch
+                    # These will be restored after the song resumes
+                    self.player.keep_open = 'yes'
+                    self.player.loop = 'inf'
                     
                     self.use_pygame_fallback = False
                     print(f"MPV reinitialized with device: {device_name}")
-                    
-                    # Restart audio analysis if a song is currently playing
-                    if hasattr(self, 'is_playing') and self.is_playing and hasattr(self, 'current_song') and self.current_song:
-                        print("Restarting audio analysis after device switch")
-                        self.root.after(100, self.restart_audio_analysis)
                     
                 except Exception as e:
                     print(f"Failed to reinitialize MPV with device {device_name}: {e}")
@@ -1208,7 +1327,9 @@ class TinyTunez:
                         vo='null',  # No video output
                         ao=self.audio_output_driver  # Use selected audio output driver
                     )
-                    self.player.volume = 70
+                    self.player.volume = int(self.volume * 100)  # Use saved volume
+                    self.player.keep_open = 'yes'
+                    self.player.loop = 'inf'
                     self.use_pygame_fallback = False
                     print("MPV reinitialized with default device")
             
@@ -1224,7 +1345,7 @@ class TinyTunez:
                     saved_size = f.read().strip()
                     if saved_size and saved_size.isdigit():
                         self.lyrics_font_size = int(saved_size)
-                        print(f"Loaded saved lyrics font size: {self.lyrics_font_size}")
+                        # print(f"Loaded saved lyrics font size: {self.lyrics_font_size}")
                     else:
                         print("No valid saved font size found, using default")
         except Exception as e:
@@ -1249,7 +1370,7 @@ class TinyTunez:
                     saved_driver = f.read().strip()
                     if saved_driver in ['wasapi', 'directsound', 'waveout', 'openal']:
                         self.audio_output_driver = saved_driver
-                        print(f"Loaded saved audio output driver: {self.audio_output_driver}")
+                        # print(f"Loaded saved audio output driver: {self.audio_output_driver}")
                     else:
                         print(f"Invalid saved driver '{saved_driver}', using default WASAPI")
                         self.audio_output_driver = 'wasapi'
@@ -1474,7 +1595,7 @@ class TinyTunez:
                     saved_device = f.read().strip()
                     if saved_device:
                         self.current_audio_device = saved_device
-                        print(f"Loaded saved audio device: {saved_device}")
+                        # print(f"Loaded saved audio device: {saved_device}")
                     else:
                         print("No saved audio device found, will use default")
                         self.current_audio_device = None
@@ -1501,12 +1622,26 @@ class TinyTunez:
         try:
             print(f"Resuming song at position: {position}")
             if self.player and not self.use_pygame_fallback:
-                # Reload the song first
-                self.player.play(self.current_song)
-                # Wait a bit then seek to the saved position
-                self.root.after(500, lambda: self.seek_to_position(position / self.total_time))
+                # Set flag to prevent song changes during resume
+                self._resuming_from_device_switch = True
+                # Since dynamic device change is working, the song should still be loaded
+                # Just unpause and seek to the saved position
+                print("Unpausing and seeking to saved position")
+                self.player.pause = False
+                self.player.volume = int(self.volume * 100)
+                self.root.after(50, lambda: self._seek_and_clear_resume_flag(position / self.total_time))
         except Exception as e:
             print(f"Error resuming song at position: {e}")
+            self._resuming_from_device_switch = False
+    
+    def _seek_and_clear_resume_flag(self, percentage):
+        """Seek to position and clear the resume flag"""
+        try:
+            self.seek_to_position(percentage)
+        finally:
+            # Clear the flag after seeking is complete
+            # Don't restore keep_open/loop - keep them set to prevent auto-advance
+            self.root.after(100, lambda: setattr(self, '_resuming_from_device_switch', False))
     
     def resume_current_song(self):
         """Resume the current song from the beginning"""
@@ -1514,9 +1649,10 @@ class TinyTunez:
             print(f"Resuming current song: {self.current_song}")
             if self.player and not self.use_pygame_fallback:
                 self.player.play(self.current_song)
+                self.player.pause = False
+                self.player.volume = int(self.volume * 100)
             else:
                 # Fallback to pygame mixer
-                import pygame.mixer
                 pygame.mixer.music.load(self.current_song)
                 pygame.mixer.music.play()
                 pygame.mixer.music.set_volume(self.volume)
@@ -1557,7 +1693,7 @@ class TinyTunez:
             return []
         
         try:
-            print("Detecting MPV-compatible audio devices...")
+            # print("Detecting MPV-compatible audio devices...")
             
             # Create a temporary MPV instance to query devices
             temp_player = mpv.MPV(ytdl=False, vo='null', ao=self.audio_output_driver)
@@ -1565,7 +1701,7 @@ class TinyTunez:
             try:
                 # Try to get device list - this might not work on all MPV versions
                 devices = temp_player.audio_device_list
-                print(f"MPV detected {len(devices)} devices:")
+                # print(f"MPV detected {len(devices)} devices:")
                 
                 mpv_devices = []
                 for device in devices:
@@ -1576,12 +1712,12 @@ class TinyTunez:
                     # Only add devices that are not 'auto'
                     if device['name'] != 'auto':
                         mpv_devices.append(device_info)
-                        print(f"  MPV Device: {device['name']} - {device.get('description', 'No description')}")
+                        pass  # print(f"  MPV Device: {device['name']} - {device.get('description', 'No description')}")
                     else:
-                        print(f"  Skipping auto device: {device['name']}")
+                        pass  # print(f"  Skipping auto device: {device['name']}")
                 
                 temp_player.terminate()
-                print(f"Filtered to {len(mpv_devices)} usable MPV devices")
+                # print(f"Filtered to {len(mpv_devices)} usable MPV devices")
                 return mpv_devices
                 
             except Exception as e:
@@ -1998,11 +2134,14 @@ class TinyTunez:
             showvalue=False,
             name='volume_slider'
         )
-        self.volume_slider.set(70)
+        # Load volume from settings and apply to slider
+        saved_volume = self.settings.get('volume', 0.7) * 100
+        self.volume_slider.set(saved_volume)
+        self.volume = saved_volume / 100
         self.volume_slider.pack(side=tk.LEFT)
         
         # Volume percentage label
-        self.volume_label = ModernLabel(frame_volume_controls, text="70%", font=('Segoe UI', 9), bg='#161b22', fg='#8b949e', width=5, anchor='center', name='volume_label')  # Width 5 chars for "100%", centered
+        self.volume_label = ModernLabel(frame_volume_controls, text=f"{int(saved_volume)}%", font=('Segoe UI', 9), bg='#161b22', fg='#8b949e', width=5, anchor='center', name='volume_label')  # Width 5 chars for "100%", centered
         self.volume_label.pack(side=tk.LEFT, padx=(5, 0))
         
     def create_playlist(self, parent):
@@ -2030,19 +2169,32 @@ class TinyTunez:
         
         # Search entry with modern styling
         self.search_var = tk.StringVar()
-        # Don't bind trace yet - will do it after treeview is created
-        
+
+        # Determine theme-aware colors for search entry
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+            search_bg = PEACH_THEME['input_bg']
+            search_fg = PEACH_THEME['input_fg']
+            search_insert_bg = PEACH_THEME['text_primary']
+            frame_bg = PEACH_THEME['input_border']
+            frame_highlight = PEACH_THEME['input_focus']
+        else:
+            search_bg = '#0d1117'
+            search_fg = '#f0f6fc'
+            search_insert_bg = '#4a9eff'
+            frame_bg = '#30363d'
+            frame_highlight = '#1f6feb'
+
         # Create a frame for search entry with inline clear button
-        frame_search_entry = ModernFrame(frame_playlist_search, bg='#0d1117', relief=tk.FLAT, highlightthickness=1, highlightbackground='#30363d', highlightcolor='#1f6feb', name='search_entry_frame')
+        frame_search_entry = ModernFrame(frame_playlist_search, bg=frame_bg, relief=tk.FLAT, highlightthickness=1, highlightbackground=frame_bg, highlightcolor=frame_highlight, name='search_entry_frame')
         frame_search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=0, pady=0)
-        
+
         self.search_entry = tk.Entry(
             frame_search_entry,
             textvariable=self.search_var,
             font=('Segoe UI', 10),
-            bg='#0d1117',
-            fg='#f0f6fc',
-            insertbackground='#4a9eff',
+            bg=search_bg,
+            fg=search_fg,
+            insertbackground=search_insert_bg,
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
@@ -2055,16 +2207,16 @@ class TinyTunez:
             frame_search_entry,
             width=16,
             height=16,
-            bg='#0d1117',
+            bg=search_bg,
             highlightthickness=0,
             bd=0
         )
         self.clear_search_canvas.place(relx=1.0, rely=0.5, anchor='e', x=-8, y=-1)
         
         # Draw circular background
-        self.clear_search_canvas.create_oval(2, 2, 14, 14, fill='#30363d', outline='#30363d')
+        self.clear_search_canvas.create_oval(2, 2, 14, 14, fill=frame_bg, outline=frame_bg)
         # Draw X symbol
-        self.clear_search_canvas.create_text(8, 8, text="✕", font=('Segoe UI', 8, 'bold'), fill='#f0f6fc')
+        self.clear_search_canvas.create_text(8, 8, text="✕", font=('Segoe UI', 8, 'bold'), fill=search_fg)
         
         # Bind events
         self.clear_search_canvas.bind('<Button-1>', self.clear_search)
@@ -2078,6 +2230,7 @@ class TinyTunez:
         self.search_entry.insert(0, "🔍 Search artist or song...")
         self.search_entry.bind('<FocusIn>', self.on_search_focus_in)
         self.search_entry.bind('<FocusOut>', self.on_search_focus_out)
+        self.search_entry.bind('<Escape>', lambda e: self.close_search_dropdown())
         
         # Bind text change to show/hide clear button
         self.search_var.trace('w', self.update_clear_button_visibility)
@@ -2166,9 +2319,9 @@ class TinyTunez:
         scrollbar_playlist.pack(side=tk.RIGHT, fill=tk.Y)
         self.playlist_treeview.config(yscrollcommand=scrollbar_playlist.set)
         
-        # Now bind the search trace since treeview is created
-        if hasattr(self, 'search_var'):
-            self.search_var.trace('w', self.filter_playlist)
+        # Bind Enter key to search entry for Winamp-style search
+        if hasattr(self, 'search_entry'):
+            self.search_entry.bind('<Return>', self.on_search_enter)
         
     def create_lyrics_window(self, parent):
         frame_lyrics_main = ModernFrame(parent, bg='#161b22', width=450, name='lyrics_frame')  # Increased from 400 to 450
@@ -2413,7 +2566,7 @@ class TinyTunez:
             # Update the playlist treeview if needed
             self.update_playlist_item_display(self.current_song, new_metadata)
             
-            print(f"Refreshed metadata: {new_metadata.get('display_name', 'Unknown')}")
+            # print(f"Refreshed metadata: {new_metadata.get('display_name', 'Unknown')}")
     
     def update_playlist_item_display(self, song_path, new_metadata):
         """Update a specific item in the playlist treeview with new metadata"""
@@ -2520,13 +2673,272 @@ class TinyTunez:
         """Handle search box focus in - clear placeholder."""
         if self.search_entry.get() == "🔍 Search artist or song...":
             self.search_entry.delete(0, tk.END)
-            self.search_entry.config(fg='#f0f6fc')
-    
+            # Use theme-aware text color
+            if hasattr(self, 'current_theme') and self.current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+                self.search_entry.config(fg=PEACH_THEME['input_fg'])
+            else:
+                self.search_entry.config(fg='#f0f6fc')
+
     def on_search_focus_out(self, event):
         """Handle search box focus out - restore placeholder if empty."""
         if not self.search_entry.get():
             self.search_entry.insert(0, "🔍 Search artist or song...")
-            self.search_entry.config(fg='#8b949e')
+            # Use theme-aware placeholder color
+            if hasattr(self, 'current_theme') and self.current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+                self.search_entry.config(fg=PEACH_THEME['text_disabled'])
+            else:
+                self.search_entry.config(fg='#8b949e')
+
+    def on_search_enter(self, event):
+        """Handle Enter key in search box - show dropdown with results."""
+        search_term = self.search_entry.get().strip()
+        
+        # Ignore if empty or just placeholder
+        if not search_term or search_term == "🔍 Search artist or song...":
+            return
+        
+        # Search for matching songs
+        results = self.search_songs(search_term)
+        
+        if results:
+            self.show_search_dropdown(results)
+        else:
+            # No results found
+            self.show_search_dropdown([])
+
+    def search_songs(self, search_term):
+        """Search for songs by artist or title."""
+        search_term = search_term.lower()
+        results = []
+        
+        for i, (song_path, metadata) in enumerate(zip(self.playlist, self.playlist_metadata)):
+            # Get display name from metadata or filename
+            if metadata and 'title' in metadata and 'artist' in metadata:
+                display_name = f"{metadata['artist']} - {metadata['title']}"
+                artist = metadata['artist'].lower()
+                title = metadata['title'].lower()
+            else:
+                song_name = os.path.basename(song_path)
+                display_name = song_name[:-4] if song_name.lower().endswith('.mp3') else song_name
+                artist = ""
+                title = display_name.lower()
+            
+            # Check if search term matches artist or title
+            if search_term in artist or search_term in title or search_term in display_name.lower():
+                results.append({
+                    'index': i,
+                    'display_name': display_name,
+                    'song_path': song_path
+                })
+        
+        return results
+
+    def show_search_dropdown(self, results):
+        """Show dropdown menu with search results."""
+        # Close existing dropdown if open
+        if hasattr(self, 'search_dropdown_frame') and self.search_dropdown_frame:
+            try:
+                self.search_dropdown_frame.destroy()
+            except:
+                pass
+            self.search_dropdown_frame = None
+        
+        # Determine theme-aware colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+            frame_bg = PEACH_THEME['bg_secondary']
+            frame_border = PEACH_THEME['border']
+            label_fg = PEACH_THEME['text_disabled']
+            listbox_bg = PEACH_THEME['surface']
+            listbox_fg = PEACH_THEME['text_primary']
+            listbox_select = PEACH_THEME['selected']
+            listbox_select_fg = PEACH_THEME['text_on_primary']
+            listbox_border = PEACH_THEME['outline']
+            scrollbar_bg = PEACH_THEME['scrollbar_bg']
+            scrollbar_thumb = PEACH_THEME['scrollbar_thumb']
+            scrollbar_hover = PEACH_THEME['scrollbar_hover']
+        else:
+            frame_bg = '#21262d'
+            frame_border = '#30363d'
+            label_fg = '#8b949e'
+            listbox_bg = '#0d1117'
+            listbox_fg = '#f0f6fc'
+            listbox_select = '#1f6feb'
+            listbox_select_fg = 'white'
+            listbox_border = '#30363d'
+            scrollbar_bg = '#21262d'
+            scrollbar_thumb = '#30363d'
+            scrollbar_hover = '#58a6ff'
+        
+        if not results:
+            # Show "No results" message
+            self.search_dropdown_frame = tk.Frame(self.root, bg=frame_bg, bd=1, relief=tk.SOLID)
+            # Position below search entry (use root-relative coordinates)
+            entry_x = self.search_entry.winfo_rootx() - self.root.winfo_rootx()
+            entry_y = self.search_entry.winfo_rooty() - self.root.winfo_rooty()
+            entry_height = self.search_entry.winfo_height()
+            self.search_dropdown_frame.place(x=entry_x, y=entry_y + entry_height, width=400, height=50)
+            
+            label = tk.Label(
+                self.search_dropdown_frame,
+                text="No results found",
+                font=('Segoe UI', 10),
+                bg=frame_bg,
+                fg=label_fg
+            )
+            label.pack(pady=10)
+            
+            # Auto-close after 2 seconds
+            self.root.after(2000, self.close_search_dropdown)
+            return
+        
+        # Create dropdown with results
+        display_results = results  # Show all results
+        visible_items = min(len(display_results), 8)  # Show max 8 items initially
+        height = visible_items * 30 + 20  # 30px per item + 20px for scrollbar
+        
+        self.search_dropdown_frame = tk.Frame(self.root, bg=frame_bg, bd=1, relief=tk.SOLID)
+        # Position below search entry (use root-relative coordinates)
+        entry_x = self.search_entry.winfo_rootx() - self.root.winfo_rootx()
+        entry_y = self.search_entry.winfo_rooty() - self.root.winfo_rooty()
+        entry_height = self.search_entry.winfo_height()
+        self.search_dropdown_frame.place(x=entry_x, y=entry_y + entry_height, width=400, height=height)
+        
+        # Create frame for listbox and scrollbar
+        inner_frame = tk.Frame(self.search_dropdown_frame, bg=frame_bg)
+        inner_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create listbox for results
+        listbox = tk.Listbox(
+            inner_frame,
+            font=('Segoe UI', 9),
+            bg=listbox_bg,
+            fg=listbox_fg,
+            selectbackground=listbox_select,
+            selectforeground=listbox_select_fg,
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=listbox_border,
+            relief=tk.FLAT
+        )
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Create scrollbar
+        scrollbar = tk.Scrollbar(
+            inner_frame,
+            orient=tk.VERTICAL,
+            command=listbox.yview,
+            bg=scrollbar_bg,
+            troughcolor=scrollbar_bg,
+            activebackground=scrollbar_hover,
+            highlightthickness=0
+        )
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Configure listbox to use scrollbar
+        listbox.config(yscrollcommand=scrollbar.set)
+        
+        # Populate listbox
+        for result in display_results:
+            listbox.insert(tk.END, result['display_name'])
+        
+        # Bind selection (double-click to play)
+        listbox.bind('<Double-1>', lambda e: self.on_search_result_selected(listbox, results))
+        listbox.bind('<Return>', lambda e: self.on_search_result_selected(listbox, results))
+        
+        # Focus on listbox
+        listbox.focus_set()
+        
+        # Bind click outside to close dropdown
+        self.root.bind('<Button-1>', lambda e: self.close_search_dropdown_on_click(e, listbox))
+        
+        # Bind Escape to close dropdown
+        self.root.bind('<Escape>', lambda e: self.close_search_dropdown())
+
+    def on_search_result_selected(self, listbox, results):
+        """Handle selection from search dropdown."""
+        selection = listbox.curselection()
+        if selection:
+            index = selection[0]
+            if index < len(results):
+                result = results[index]
+                # Enable auto-play for this explicit user action
+                self.auto_play_enabled = True
+                self.has_manually_played = True
+                # Play the selected song at the index
+                self.play_selected_song_at_index(result['index'])
+                self.auto_play_enabled = False
+                # Clear search box
+                self.search_var.set("")
+                self.search_entry.delete(0, tk.END)
+                self.search_entry.insert(0, "🔍 Search artist or song...")
+                self.search_entry.config(fg='#8b949e')
+                # Close dropdown
+                self.close_search_dropdown()
+
+    def navigate_to_song(self, song_index):
+        """Navigate to a specific song in the playlist."""
+        if 0 <= song_index < len(self.playlist):
+            # Update current index
+            self.current_index = song_index
+            # Select and show the song in treeview
+            for item in self.playlist_treeview.get_children():
+                tags = self.playlist_treeview.item(item, 'tags')
+                for tag in tags:
+                    if tag.startswith('index_') and int(tag.split('_')[1]) == song_index:
+                        self.playlist_treeview.selection_clear()
+                        self.playlist_treeview.selection_set(item)
+                        self.playlist_treeview.see(item)
+                        break
+
+    def close_search_dropdown(self):
+        """Close the search dropdown."""
+        if hasattr(self, 'search_dropdown_frame') and self.search_dropdown_frame:
+            try:
+                self.search_dropdown_frame.destroy()
+                self.search_dropdown_frame = None
+            except:
+                pass
+        # Unbind the global click handler
+        self.root.unbind('<Button-1>')
+        self.root.unbind('<Escape>')
+
+    def close_search_dropdown_on_click(self, event, listbox):
+        """Close dropdown when clicking outside the listbox."""
+        # Check if listbox still exists (it might have been destroyed)
+        try:
+            # Get the coordinates of the click
+            x, y = event.x_root, event.y_root
+            
+            # Get the listbox coordinates
+            listbox_x = listbox.winfo_rootx()
+            listbox_y = listbox.winfo_rooty()
+            listbox_width = listbox.winfo_width()
+            listbox_height = listbox.winfo_height()
+            
+            # Check if click is outside the listbox
+            if not (listbox_x <= x <= listbox_x + listbox_width and listbox_y <= y <= listbox_y + listbox_height):
+                self.close_search_dropdown()
+        except tk.TclError:
+            # Listbox has been destroyed, just close the dropdown
+            self.close_search_dropdown()
+
+    def close_search_dropdown_on_click_frame(self, event, listbox):
+        """Close dropdown when clicking outside the frame."""
+        if not hasattr(self, 'search_dropdown_frame') or not self.search_dropdown_frame:
+            return
+        
+        # Get the coordinates of the click
+        x, y = event.x, event.y
+        
+        # Get the frame coordinates relative to root
+        frame_x = self.search_dropdown_frame.winfo_x()
+        frame_y = self.search_dropdown_frame.winfo_y()
+        frame_width = self.search_dropdown_frame.winfo_width()
+        frame_height = self.search_dropdown_frame.winfo_height()
+        
+        # Check if click is outside the frame
+        if not (frame_x <= x <= frame_x + frame_width and frame_y <= y <= frame_y + frame_height):
+            self.close_search_dropdown()
     
     def clear_search(self, event=None):
         """Clear the search box and reset the playlist view."""
@@ -2536,6 +2948,8 @@ class TinyTunez:
         self.search_entry.config(fg='#8b949e')
         # Hide clear button after clearing
         self.clear_search_canvas.place_forget()
+        # Close dropdown if open
+        self.close_search_dropdown()
         # Focus back to search entry
         self.search_entry.focus_set()
     
@@ -2686,7 +3100,7 @@ class TinyTunez:
                                 'name': device['name'],
                                 'description': device['description']
                             })
-                    print(f"Added {len(devices)} MPV devices to audio menu")
+                    # print(f"Added {len(devices)} MPV devices to audio menu")
                 else:
                     # Fallback to sounddevice if MPV detection fails
                     detected_devices = self.detect_audio_devices_sounddevice()
@@ -2699,7 +3113,7 @@ class TinyTunez:
                             'name': f"sounddevice/{device['id']}",
                             'description': f"{device['id']}: {device['name']}"
                         })
-                    print(f"Added {len(devices)} sounddevice devices to audio menu")
+                    # print(f"Added {len(devices)} sounddevice devices to audio menu")
                     
             except Exception as e:
                 print(f"Error getting device list: {e}")
@@ -4049,8 +4463,18 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def filter_playlist(self, *args):
         """Filter playlist based on search query."""
+        # Skip if folder scanning is in progress to prevent UI duplication
+        if hasattr(self, '_scanning_folders') and self._scanning_folders:
+            return
+        
         # Check if search_var and playlist_treeview exist (might not during initialization)
         if not hasattr(self, 'search_var') or not hasattr(self, 'playlist_treeview'):
+            return
+        
+        # Check if treeview widget is still valid
+        try:
+            self.playlist_treeview.winfo_exists()
+        except tk.TclError:
             return
             
         search_term = self.search_var.get().lower()
@@ -4114,9 +4538,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         if tag.startswith('index_') and int(tag.split('_')[1]) == self.current_index:
                             self.playlist_treeview.selection_set(item)
                             self.playlist_treeview.see(item)
-                            # Re-apply peach theme if active to prevent color reversion
-                            if hasattr(self, 'current_theme') and self.current_theme == 'peach':
-                                self.apply_peach_theme()
                             break
             except:
                 pass
@@ -4130,15 +4551,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.playlist_metadata = data.get('metadata', [])
                     self.current_index = data.get('current_index', 0)
                     
-                    # Verify files still exist
+                    # Verify files still exist and use cached metadata
                     valid_songs = []
                     valid_metadata = []
                     for i, song_path in enumerate(self.playlist):
                         if os.path.exists(song_path):
                             valid_songs.append(song_path)
-                            # Always re-read metadata to get updated information
-                            metadata = self.get_song_metadata(song_path)
-                            valid_metadata.append(metadata)
+                            # Use cached metadata from playlist file instead of re-reading
+                            if i < len(self.playlist_metadata):
+                                valid_metadata.append(self.playlist_metadata[i])
+                            else:
+                                # Fallback to reading metadata if not cached
+                                metadata = self.get_song_metadata(song_path)
+                                valid_metadata.append(metadata)
                     
                     self.playlist = valid_songs
                     self.playlist_metadata = valid_metadata
@@ -4283,7 +4708,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             self.apply_peach_folder_selection_children(dialog, theme)
             
         except Exception as e:
-            print(f"Error applying peach theme to Select Music Folders dialog: {e}")
+            pass
     
     def apply_peach_folder_selection_children(self, parent, theme):
         """Apply peach theme to all children in Select Music Folders dialog"""
@@ -4376,7 +4801,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.apply_peach_folder_selection_children(widget, theme)
                     
         except Exception as e:
-            print(f"Error applying peach theme to Select Music Folders dialog children: {e}")
+            pass
     
     def restore_dark_folder_selection_dialog(self, dialog):
         """Restore dark theme to Select Music Folders dialog"""
@@ -4388,7 +4813,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             self.restore_dark_folder_selection_children(dialog)
             
         except Exception as e:
-            print(f"Error restoring dark theme to Select Music Folders dialog: {e}")
+            pass
     
     def restore_dark_folder_selection_children(self, parent):
         """Restore dark theme to all children in Select Music Folders dialog"""
@@ -4451,10 +4876,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     self.restore_dark_folder_selection_children(widget)
                     
         except Exception as e:
-            print(f"Error restoring dark theme to Select Music Folders dialog children: {e}")
+            pass
     
     def update_all_folder_selection_dialogs_theme(self):
         """Update theme for all open Select Music Folders dialogs"""
+        # Skip if folder scanning is in progress
+        if hasattr(self, '_scanning_folders') and self._scanning_folders:
+            return
+        
+        # Debounce to prevent repeated calls during folder addition
+        if hasattr(self, '_folder_theme_update_pending') and self._folder_theme_update_pending:
+            return
+        self._folder_theme_update_pending = True
+        
         try:
             # Find all Toplevel windows that might be folder selection dialogs
             for widget in self.root.winfo_children():
@@ -4465,9 +4899,11 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             self.apply_peach_folder_selection_dialog(widget)
                         else:
                             self.restore_dark_folder_selection_dialog(widget)
-                        print(f"Updated Select Music Folders dialog theme to {self.current_theme}")
         except Exception as e:
-            print(f"Error updating Select Music Folders dialogs theme: {e}")
+            pass
+        finally:
+            # Reset flag after a short delay
+            self.root.after(500, lambda: setattr(self, '_folder_theme_update_pending', False))
     
     def show_folder_selection_dialog(self):
         """Show a dialog for selecting multiple folders."""
@@ -4484,6 +4920,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Store selected folders and current directory
         selected_folders = []
         current_directory = None
+        folder_list = []
+        selected_indices = ()
         
         # Header
         frame_folder_selection_header = ModernFrame(window_folder_selection, bg='#161b22', height=50)
@@ -4526,6 +4964,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         def load_folders_from_directory():
             """Load all subfolders from the selected directory into the listbox."""
+            nonlocal folder_list
             if not current_directory:
                 return
             
@@ -4546,6 +4985,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Add to listbox
                 for folder in folders:
                     folder_listbox.insert(tk.END, folder)
+                
+                # Store folder list for reliable access later
+                folder_list = folders.copy()
                 
                 # Update status
                 label_folder_status.config(text=f"📁 Found {len(folders)} folders in {os.path.basename(current_directory)}")
@@ -4595,6 +5037,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         folder_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar_folder_list.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Bind selection update to listbox
+        folder_listbox.bind('<<ListboxSelect>>', lambda e: update_selection())
+        
         # Status label
         label_folder_status = ModernLabel(
             frame_folder_content,
@@ -4612,86 +5057,83 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         frame_folder_buttons.pack_propagate(False)
         
         # Button functions
+        def update_selection():
+            nonlocal selected_indices
+            selected_indices = folder_listbox.curselection()
+        
         def select_all():
             folder_listbox.selection_set(0, tk.END)
+            update_selection()
         
         def clear_selection():
             folder_listbox.selection_clear(0, tk.END)
+            update_selection()
         
         def add_folders_to_playlist():
-            selected_indices = folder_listbox.curselection()
-            if not selected_indices:
-                messagebox.showwarning("No Selection", "Please select at least one folder.")
-                return
-            
-            if not current_directory:
-                messagebox.showwarning("No Directory", "Please select a parent directory first.")
-                return
-            
-            # Create progress dialog for large selections
-            if len(selected_indices) > 50:
-                progress_window = tk.Toplevel(window_folder_selection)
-                progress_window.title("Processing Folders...")
-                progress_window.geometry("400x150")
-                progress_window.resizable(False, False)
-                progress_window.transient(window_folder_selection)
-                progress_window.grab_set()
-                
-                # Center the progress dialog
-                progress_window.update_idletasks()
-                x = (progress_window.winfo_screenwidth() // 2) - (400 // 2)
-                y = (progress_window.winfo_screenheight() // 2) - (150 // 2)
-                progress_window.geometry(f"400x150+{x}+{y}")
-                
-                tk.Label(progress_window, text=f"Processing {len(selected_indices)} folders...", 
-                        font=('Segoe UI', 12)).pack(pady=20)
-                
-                progress_var = tk.DoubleVar()
-                progress_bar = ttk.Progressbar(progress_window, variable=progress_var, 
-                                            maximum=len(selected_indices), length=350)
-                progress_bar.pack(pady=10)
-                
-                status_label = tk.Label(progress_window, text="Starting...", font=('Segoe UI', 10))
-                status_label.pack(pady=5)
-                
-                # Update GUI to show progress dialog
-                progress_window.update()
-            else:
-                progress_window = None
-                progress_var = None
-                status_label = None
-            
-            total_songs = 0
             try:
-                for i, index in enumerate(selected_indices):
-                    # Update progress
-                    if progress_window:
-                        progress_var.set(i + 1)
-                        folder_name = folder_listbox.get(index)
-                        status_label.config(text=f"Processing: {folder_name} ({i+1}/{len(selected_indices)})")
-                        progress_window.update()
-                    
-                    # Process folder
-                    folder_name = folder_listbox.get(index)
-                    folder_path = os.path.join(current_directory, folder_name)
-                    songs_added = self.scan_music_folder(folder_path, show_progress=False)
-                    total_songs += songs_added
-                    
-                    # Small delay to prevent freezing with very large selections
-                    if progress_window and i % 10 == 0:
-                        progress_window.update_idletasks()
+                # Set flag to prevent theme updates during this operation
+                self._scanning_folders = True
                 
-                # Show success message
-                if progress_window:
-                    progress_window.destroy()
+                # Check if dialog still exists
+                if not window_folder_selection.winfo_exists():
+                    self._scanning_folders = False
+                    return
                 
-                messagebox.showinfo("Success", f"Added {total_songs} songs from {len(selected_indices)} folder(s).")
+                # Use stored selected indices instead of calling curselection
+                if not selected_indices:
+                    self._scanning_folders = False
+                    messagebox.showwarning("No Selection", "Please select at least one folder.")
+                    return
+                
+                if not current_directory:
+                    self._scanning_folders = False
+                    messagebox.showwarning("No Directory", "Please select a parent directory first.")
+                    return
+                
+                # Prepare folder paths using stored folder list and selected indices
+                folder_paths = []
+                for index in selected_indices:
+                    if index < len(folder_list):
+                        folder_name = folder_list[index]
+                        folder_path = os.path.join(current_directory, folder_name)
+                        folder_paths.append(folder_path)
+                
+                # Close dialog immediately before scanning
                 window_folder_selection.destroy()
                 
+                # Scan folders in background thread
+                def scan_folders():
+                    total_songs = 0
+                    files_to_process = []
+                    try:
+                        for folder_path in folder_paths:
+                            songs_added, files = self.scan_music_folder(folder_path, show_progress=False, return_files=True)
+                            total_songs += songs_added
+                            files_to_process.extend(files)
+                        
+                        # Update UI after all folders are scanned
+                        self.root.after(0, lambda: self.filter_playlist())
+                        
+                        # Reset flag before metadata population starts
+                        self._scanning_folders = False
+                        
+                        # Start metadata population after UI is updated
+                        if files_to_process:
+                            start_index = len(self.playlist) - len(files_to_process)
+                            self.root.after(100, lambda: self.populate_metadata_async(files_to_process, start_index))
+                        
+                        # Show success message on main thread (custom dialog to avoid system sound)
+                        self.root.after(0, lambda: self.show_custom_message("Success", f"Added {total_songs} songs from {len(folder_paths)} folder(s). Metadata will load in background."))
+                    except Exception as e:
+                        self._scanning_folders = False
+                        print(f"Error in scan_folders: {e}")
+                        self.root.after(0, lambda: messagebox.showerror("Error", f"Error processing folders: {str(e)}"))
+                
+                thread = threading.Thread(target=scan_folders, daemon=True)
+                thread.start()
             except Exception as e:
-                if progress_window:
-                    progress_window.destroy()
-                messagebox.showerror("Error", f"Error processing folders: {str(e)}")
+                self._scanning_folders = False
+                messagebox.showerror("Error", f"Error accessing folder selection: {str(e)}")
         
         def cancel():
             window_folder_selection.destroy()
@@ -4865,27 +5307,124 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         except Exception as e:
             messagebox.showerror("Error", f"Could not open album folder:\n{str(e)}")
     
-    def scan_music_folder(self, folder_path, show_progress=True):
-        """Scan a music folder and add songs to playlist. Returns count of songs added."""
-        songs_added = 0
-        for root, dirs, files in os.walk(folder_path):
-            for file in files:
-                if file.lower().endswith(('.mp3', '.wav', '.ogg', '.flac')):
-                    file_path = os.path.join(root, file)
-                    self.playlist.append(file_path)
-                    metadata = self.get_song_metadata(file_path)
-                    self.playlist_metadata.append(metadata)
-                    # Don't add to treeview directly - let filter_playlist handle it
-                    songs_added += 1
+    def scan_music_folder(self, folder_path, show_progress=True, return_files=False):
+        """Scan a music folder and add songs to playlist. Returns count of songs added, and optionally files list."""
+        with self.playlist_lock:
+            songs_added = 0
+            files_to_process = []
+            start_index = len(self.playlist)
+            
+            # First pass: collect all music files
+            for root, dirs, files in os.walk(folder_path):
+                for file in files:
+                    if file.lower().endswith(('.mp3', '.wav', '.ogg', '.flac')):
+                        file_path = os.path.join(root, file)
+                        files_to_process.append(file_path)
+            
+            # Add files immediately with placeholder metadata (like Winamp)
+            for file_path in files_to_process:
+                filename = os.path.basename(file_path)
+                placeholder_metadata = {
+                    'title': filename,
+                    'artist': 'Loading...',
+                    'album': 'Loading...',
+                    'duration': None,
+                    'display_name': filename
+                }
+                self.playlist.append(file_path)
+                self.playlist_metadata.append(placeholder_metadata)
+                songs_added += 1
+            
+            # Save playlist after adding files
+            self.debounced_save_playlist()
         
-        # Save playlist after adding folder
-        self.debounced_save_playlist()
+        # Don't update treeview during scanning - will update after all folders are done
+        # Don't start metadata population here - will be done after all folders are scanned
         
-        # Update treeview to show newly added songs
-        if hasattr(self, 'search_var'):
-            self.filter_playlist()
-        
+        if return_files:
+            return songs_added, files_to_process
         return songs_added
+    
+    def populate_metadata_async(self, file_paths, start_index):
+        """Populate metadata for files in background thread"""
+        def worker():
+            for i, file_path in enumerate(file_paths):
+                playlist_index = start_index + i
+                try:
+                    # Get actual metadata
+                    metadata = self.get_song_metadata(file_path)
+                    
+                    # Update metadata in the main thread with delay
+                    self.root.after(i * 5, lambda idx=playlist_index, meta=metadata: self.update_metadata_for_file(idx, meta))
+                    
+                    # Small delay to prevent overwhelming the UI
+                    if i % 5 == 0:
+                        time.sleep(0.02)
+                except Exception as e:
+                    print(f"Error getting metadata for {file_path}: {e}")
+        
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+    
+    def update_metadata_for_file(self, index, metadata):
+        """Update metadata for a specific file and refresh treeview"""
+        # Skip if folder scanning is in progress - will update after scanning completes
+        if hasattr(self, '_scanning_folders') and self._scanning_folders:
+            # Still update metadata in the background, just don't touch treeview
+            with self.playlist_lock:
+                if index < len(self.playlist_metadata):
+                    self.playlist_metadata[index] = metadata
+            return
+        
+        with self.playlist_lock:
+            if index < len(self.playlist_metadata):
+                self.playlist_metadata[index] = metadata
+        
+        # Update the treeview item directly without rebuilding entire list
+        if hasattr(self, 'playlist_treeview'):
+            try:
+                # Find the item in the treeview that corresponds to this index
+                tree_items = self.playlist_treeview.get_children()
+                
+                # Check if we have a filtered view
+                if hasattr(self, 'filtered_indices') and self.filtered_indices:
+                    # Find the filtered item that corresponds to this index
+                    for tree_idx, orig_idx in enumerate(self.filtered_indices):
+                        if orig_idx == index and tree_idx < len(tree_items):
+                            item = tree_items[tree_idx]
+                            display_name = metadata.get('display_name', os.path.basename(self.playlist[index]))
+                            length = metadata.get('length', '0:00')
+                            
+                            # Get star icon
+                            star_icon = ""
+                            if metadata and 'artist' in metadata and 'title' in metadata:
+                                song_key = f"{metadata['artist']} - {metadata['title']}"
+                                if self.check_cached_lyrics(metadata['artist'], metadata['title']):
+                                    star_icon = "⭐"
+                            
+                            self.playlist_treeview.item(item, values=(star_icon, index + 1, display_name, length))
+                            break
+                else:
+                    # No filter, direct index mapping
+                    if index < len(tree_items):
+                        item = tree_items[index]
+                        display_name = metadata.get('display_name', os.path.basename(self.playlist[index]))
+                        length = metadata.get('length', '0:00')
+                        
+                        # Get star icon
+                        star_icon = ""
+                        if metadata and 'artist' in metadata and 'title' in metadata:
+                            song_key = f"{metadata['artist']} - {metadata['title']}"
+                            if self.check_cached_lyrics(metadata['artist'], metadata['title']):
+                                star_icon = "⭐"
+                        
+                        self.playlist_treeview.item(item, values=(star_icon, index + 1, display_name, length))
+            except Exception as e:
+                pass  # Ignore errors during individual item updates
+        
+        # Save playlist periodically
+        if index % 50 == 0:
+            self.debounced_save_playlist()
                         
     def clear_playlist(self):
         """Clear the entire playlist and save the empty state."""
@@ -5132,10 +5671,15 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         artist = metadata['artist']
         title = metadata['title']
         
-        # Create context menu
-        context_menu = tk.Menu(self.root, tearoff=0, bg='#161b22', fg='#f0f6fc',
-                             activebackground='#21262d', activeforeground='#4a9eff',
-                             font=('Segoe UI', 10))
+        # Create context menu with theme-appropriate colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            context_menu = tk.Menu(self.root, tearoff=0, bg='#FFE0CC', fg='#2D1810',
+                                 activebackground='#FFB366', activeforeground='#2D1810',
+                                 font=('Segoe UI', 10))
+        else:
+            context_menu = tk.Menu(self.root, tearoff=0, bg='#161b22', fg='#f0f6fc',
+                                 activebackground='#21262d', activeforeground='#4a9eff',
+                                 font=('Segoe UI', 10))
         
         # Add lyrics options
         context_menu.add_command(label="🎤 Create Synced Lyrics", 
@@ -5698,7 +6242,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.display_synced_lyrics(final_lyrics, "User Created", artist, title)
                 self.update_lyrics_status("-- User Created")
                 
-                messagebox.showinfo("Success", "Synced lyrics saved successfully!\n(.lrc file created in song folder)")
+                self.show_success_dialog("Synced lyrics saved successfully!\n(.lrc file created in song folder)")
                 window_synced_editor.destroy()
             else:
                 messagebox.showwarning("No Timestamps", "Please add at least one timestamp before saving.")
@@ -6237,8 +6781,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def get_lyrics_from_api(self, artist, title, song_path=None):
         """Get lyrics from LrcLib and lyrics.ovh based on user preference."""
-        print(f"Searching lyrics for {artist} - {title}")
-        print(f"LrcLib available: {LRC_AVAILABLE}")
+        # print(f"Searching lyrics for {artist} - {title}")
+        # print(f"LrcLib available: {LRC_AVAILABLE}")
         
         # Get user preference
         preference = self.settings.get('lyrics_preference', 'synced_first')
@@ -6290,7 +6834,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     # Ensure duration is between 1-3600 seconds
                     duration = min(max(duration, 1), 3600)
                     
-                    print(f"Searching LRCLib for plain lyrics: {artist} - {title} (duration: {duration}s)")
+                    # print(f"Searching LRCLib for plain lyrics: {artist} - {title} (duration: {duration}s)")
                     
                     # Try multiple search variations for better results
                     search_variations = [
@@ -6307,7 +6851,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     
                     for search_title, search_artist in search_variations:
                         if search_title and search_artist:
-                            print(f"Trying plain lyrics search: {search_artist} - {search_title}")
+                            # print(f"Trying plain lyrics search: {search_artist} - {search_title}")
                             try:
                                 lyrics = api.get_lyrics(
                                     track_name=search_title,
@@ -6317,14 +6861,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                 )
                                 
                                 if lyrics and lyrics.plain_lyrics:
-                                    print(f"Found plain lyrics with variation: {search_artist} - {search_title}")
+                                    # print(f"Found plain lyrics with variation: {search_artist} - {search_title}")
                                     break
                             except Exception as e:
-                                print(f"Plain lyrics search failed for {search_artist} - {search_title}: {e}")
+                                # print(f"Plain lyrics search failed for {search_artist} - {search_title}: {e}")
                                 continue
                     else:
                         # If all variations failed, try the original one last time
-                        print(f"Trying original plain lyrics search as fallback: {artist} - {title}")
+                        # print(f"Trying original plain lyrics search as fallback: {artist} - {title}")
                         lyrics = api.get_lyrics(
                             track_name=title,
                             artist_name=artist,
@@ -6396,7 +6940,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Ensure duration is between 1-3600 seconds
                 duration = min(max(duration, 1), 3600)
                 
-                print(f"Searching LRCLib for: {artist} - {title} (duration: {duration}s)")
+                # print(f"Searching LRCLib for: {artist} - {title} (duration: {duration}s)")
                 
                 # Try multiple search variations for better results
                 search_variations = [
@@ -6413,7 +6957,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 
                 for search_title, search_artist in search_variations:
                     if search_title and search_artist:
-                        print(f"Trying search: {search_artist} - {search_title}")
+                        # print(f"Trying search: {search_artist} - {search_title}")
                         try:
                             lyrics = api.get_lyrics(
                                 track_name=search_title,
@@ -6423,14 +6967,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                             )
                             
                             if lyrics and (lyrics.synced_lyrics or lyrics.plain_lyrics):
-                                print(f"Found lyrics with variation: {search_artist} - {search_title}")
+                                # print(f"Found lyrics with variation: {search_artist} - {search_title}")
                                 break
                         except Exception as e:
-                            print(f"Search failed for {search_artist} - {search_title}: {e}")
+                            # print(f"Search failed for {search_artist} - {search_title}: {e}")
                             continue
                 else:
                     # If all variations failed, try the original one last time
-                    print(f"Trying original search as fallback: {artist} - {title}")
+                    # print(f"Trying original search as fallback: {artist} - {title}")
                     lyrics = api.get_lyrics(
                         track_name=title,
                         artist_name=artist,
@@ -6627,12 +7171,28 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         if getattr(self, 'seek_pending', False):
             return
         
+        # Don't allow song changes during device switch resume
+        if getattr(self, '_resuming_from_device_switch', False):
+            return
+        
         # Check if auto-play should be allowed
         if not self.auto_play_enabled:
             if not self.has_manually_played:
                 return
             else:
                 pass
+        
+        # Add to shuffle history if shuffle mode is on
+        if self.is_shuffle and not getattr(self, '_skip_history_add', False):
+            # Only add if this is a new song (not just replaying current)
+            if not self.shuffle_history or self.current_index != self.shuffle_history[-1]:
+                self.shuffle_history.append(self.current_index)
+                self.shuffle_history_index = len(self.shuffle_history) - 1
+                
+                # Limit history size to prevent memory issues
+                if len(self.shuffle_history) > 100:
+                    self.shuffle_history.pop(0)
+                    self.shuffle_history_index -= 1
             
         if self.current_index < len(self.playlist):
             self.current_song = song_path = self.playlist[self.current_index]
@@ -6696,7 +7256,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Preload audio analysis when song is selected (not when played)
             def preload_audio_analysis():
                 self.load_audio_for_analysis(self.current_song)
-                # Don't start analysis here - it will be started when song actually plays
+                # Start analysis when preload completes
+                if self.current_audio_samples is not None:
+                    self.start_audio_analysis()
             
             threading.Thread(target=preload_audio_analysis, daemon=True).start()
             
@@ -6715,6 +7277,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Load and play the song
                 if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
                     # Use MPV for real seeking
+                    # Ensure player is not paused before playing new song
+                    self.player.pause = False
                     self.player.play(self.current_song)
                     self.player.volume = int(self.volume * 100)
                     
@@ -6762,6 +7326,18 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     pygame.mixer.music.load(self.current_song)
                     pygame.mixer.music.play()
                     pygame.mixer.music.set_volume(self.volume)
+                
+                # ALWAYS start pygame.mixer.music for visualization timing (even with MPV)
+                # This provides accurate timing for STFT frame lookup
+                try:
+                    if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', False):
+                        # MPV is playing audio, but start pygame.mixer at 0 volume for timing
+                        pygame.mixer.music.load(self.current_song)
+                        pygame.mixer.music.set_volume(0.0)  # Silent - MPV handles audio
+                        pygame.mixer.music.play()
+                        # print("[PYGAME] Started pygame.mixer.music for visualization timing (silent)")
+                except Exception as e:
+                    print(f"[PYGAME] Failed to start timing track: {e}")
                 
                 # Set playing state BEFORE starting analysis
                 self.is_playing = True
@@ -6876,34 +7452,64 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             pass  # Silently handle cleanup errors
     
     def play_song(self):
+        print("DEBUG: PLAY button clicked")
         # PRIORITY 1: Resume from pause if we're paused - this should be checked BEFORE treeview selection
+        # BUT first check if a different song is selected in the treeview
         if self.is_paused:
-            # Resume from pause - don't change the current song
-            try:
-                if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', False):
-                    self.player.pause = False  # Unpause with mpv
-                else:
-                    import pygame.mixer
-                    pygame.mixer.music.unpause()
+            # Check if a different song is selected in the treeview
+            selection = self.playlist_treeview.selection()
+            song_index = -1
+            if selection:
+                item = selection[0]
+                tags = self.playlist_treeview.item(item, 'tags')
+                for tag in tags:
+                    if tag.startswith('index_'):
+                        try:
+                            song_index = int(tag.split('_')[1])
+                            break
+                        except (ValueError, IndexError):
+                            continue
+            
+            # If a different song is selected while paused, load that song instead of resuming
+            if song_index >= 0 and song_index < len(self.playlist) and song_index != self.current_index:
+                # Reset paused state and load the new song
                 self.is_paused = False
-                self.is_playing = True
-                
-                # Clear previous synced lyrics state before reloading
-                self.stop_karaoke_timer()
-                self.lyrics_lines = []
-                
-                # Reload lyrics to ensure we have the latest version
-                if hasattr(self, 'current_song') and self.current_song:
-                    self.fetch_lyrics(self.current_song)
-                
-                # Start karaoke timer only if the newly loaded lyrics are synced
-                if self.lyrics_lines and self.current_lyrics_is_synced:
-                    self.start_karaoke_timer()
-                self.start_visualization()
-                self.start_audio_analysis()
-            except Exception as e:
-                pass
-            return
+                self.current_index = song_index
+                if self.current_index < len(self.playlist):
+                    self.current_song = self.playlist[self.current_index]
+                # Enable auto-play for this explicit user action
+                self.auto_play_enabled = True
+                self.has_manually_played = True
+                self.play_selected_song()
+                self.auto_play_enabled = False
+                return
+            else:
+                # No different song selected - just resume the current paused song
+                try:
+                    if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', False):
+                        self.player.pause = False  # Unpause with mpv
+                    else:
+                        import pygame.mixer
+                        pygame.mixer.music.unpause()
+                    self.is_paused = False
+                    self.is_playing = True
+                    
+                    # Clear previous synced lyrics state before reloading
+                    self.stop_karaoke_timer()
+                    self.lyrics_lines = []
+                    
+                    # Reload lyrics to ensure we have the latest version
+                    if hasattr(self, 'current_song') and self.current_song:
+                        self.fetch_lyrics(self.current_song)
+                    
+                    # Start karaoke timer only if the newly loaded lyrics are synced
+                    if self.lyrics_lines and self.current_lyrics_is_synced:
+                        self.start_karaoke_timer()
+                    self.start_visualization()
+                    self.start_audio_analysis()
+                except Exception as e:
+                    pass
+                return
         
         # PRIORITY 2: If not paused, check if we have a loaded song (like last played song) first
         # This takes priority over treeview selection for Winamp-like behavior
@@ -7012,6 +7618,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     pass
             
     def pause_song(self):
+        print("DEBUG: PAUSE button clicked")
         if self.is_playing and not self.is_paused:
             # Pause playback
             try:
@@ -7040,6 +7647,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.is_paused = False
     
     def stop_song(self):
+        print("DEBUG: STOP button clicked")
         if self.is_playing:
             # Increment usage counter and check if reinitialization is needed
             self.player_usage_count += 1
@@ -7059,6 +7667,49 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             
             # Stop scrolling when song stops
             self.stop_scrolling()
+            
+            # Clear visualization bars when song stops
+            if hasattr(self, 'bar_levels'):
+                self.bar_levels = [0.0] * len(self.bar_levels)
+            if hasattr(self, 'bar_peaks'):
+                self.bar_peaks = [0.0] * len(self.bar_peaks)
+            if hasattr(self, 'visualization_running'):
+                self.stop_visualization()
+            
+            # For segmented style, keep bars visible with off color instead of deleting them
+            if hasattr(self, 'viz_bars') and hasattr(self, 'viz_theme'):
+                if self.viz_theme == "segmented":
+                    # Update all segments to off color (baseline)
+                    off_color = self.get_bar_off_color()
+                    for bar in self.viz_bars:
+                        if isinstance(bar, list):
+                            # Segmented bar (list of segments)
+                            for segment in bar:
+                                self.visualization_canvas.itemconfig(segment, fill=off_color, outline="")
+                else:
+                    # Basic style - delete all canvas items to clear visualization
+                    for bar in self.viz_bars:
+                        if isinstance(bar, list):
+                            # Segmented bar (list of segments)
+                            for segment in bar:
+                                self.visualization_canvas.delete(segment)
+                        else:
+                            # Basic bar (single rectangle)
+                            self.visualization_canvas.delete(bar)
+                    self.viz_bars = []
+            
+            if hasattr(self, 'viz_peaks'):
+                # Move peaks to bottom of canvas instead of deleting them
+                width = self.visualization_canvas.winfo_width()
+                height = self.visualization_canvas.winfo_height()
+                num_bars = len(self.viz_peaks)
+                bar_spacing = self.viz_bar_spacing
+                bar_width = max(1, (width - (num_bars + 1) * bar_spacing) // num_bars)
+                
+                for i, peak in enumerate(self.viz_peaks):
+                    x1 = i * (bar_width + bar_spacing) + bar_spacing
+                    x2 = x1 + bar_width
+                    self.visualization_canvas.coords(peak, x1, height - 2, x2, height)
             
             # Keep song info but update status to show it's stopped
             if self.current_song:
@@ -7083,13 +7734,12 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.current_time_label.config(text="0:00")
                 self.show_default_album_icon()
         
-            # Clear visualization
-            self.visualization_canvas.delete("all")
-            # Clean up visualization items to prevent memory leaks
-            if hasattr(self, 'viz_bars'):
-                self.viz_bars.clear()
-            if hasattr(self, 'viz_peaks'):
-                self.viz_peaks.clear()
+            # Don't clear visualization - let bars be reused
+            # Just reset the bar levels to 0
+            if hasattr(self, 'bar_levels'):
+                self.bar_levels = [0] * len(self.bar_levels)
+            if hasattr(self, 'bar_peaks'):
+                self.bar_peaks = [0] * len(self.bar_peaks)
         
             # Reset progress bar
             self.progress_fill.config(width=0)
@@ -7099,6 +7749,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         self.lyrics_text.config(state=tk.DISABLED)
         
     def previous_song(self):
+        print("DEBUG: PREVIOUS button clicked")
         # Don't allow song changes during seeking
         if getattr(self, 'seek_pending', False):
             return
@@ -7108,10 +7759,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             if self.shuffle_history_index > 0:
                 self.shuffle_history_index -= 1
                 self.current_index = self.shuffle_history[self.shuffle_history_index]
+                # Skip history addition when navigating back
+                self._skip_history_add = True
                 self.play_selected_song()
-            elif self.shuffle_history_index == 0:
-                # If we're at the first song in history, just replay it
-                self.play_selected_song()
+                self._skip_history_add = False
+            # If at start of history, do nothing (like Winamp)
+        elif self.is_shuffle:
+            # Shuffle mode but no history yet, do nothing
+            pass
         else:
             # Normal mode - go to previous song in playlist
             if self.current_index > 0:
@@ -7119,24 +7774,33 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 self.play_selected_song()
             
     def next_song(self):
+        print("DEBUG: NEXT button clicked")
         # Don't allow song changes during seeking
         if getattr(self, 'seek_pending', False):
             return
-            
-        if self.is_shuffle and self.playlist:
-            # Random song in shuffle mode
+        
+        # Don't allow song changes during device switch resume
+        if getattr(self, '_resuming_from_device_switch', False):
+            return
+        
+        if self.is_shuffle and self.shuffle_history:
+            # Check if we can go forward in shuffle history
+            if self.shuffle_history_index < len(self.shuffle_history) - 1:
+                self.shuffle_history_index += 1
+                self.current_index = self.shuffle_history[self.shuffle_history_index]
+                self.play_selected_song()
+            elif self.shuffle_history_index == len(self.shuffle_history) - 1:
+                # At end of history, pick random song and add to history
+                import random
+                self.current_index = random.randint(0, len(self.playlist) - 1)
+                # Keep trying until we get a different song
+                while self.current_index == self.shuffle_history[-1] and len(self.playlist) > 1:
+                    self.current_index = random.randint(0, len(self.playlist) - 1)
+                self.play_selected_song()
+        elif self.is_shuffle and self.playlist:
+            # Shuffle mode but no history yet, pick random song
             import random
             self.current_index = random.randint(0, len(self.playlist) - 1)
-            
-            # Add to shuffle history
-            self.shuffle_history.append(self.current_index)
-            self.shuffle_history_index = len(self.shuffle_history) - 1
-            
-            # Limit history size to prevent memory issues
-            if len(self.shuffle_history) > 100:
-                self.shuffle_history.pop(0)
-                self.shuffle_history_index -= 1
-            
             self.play_selected_song()
         elif self.current_index < len(self.playlist) - 1:
             # Next song in normal mode
@@ -7166,7 +7830,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     def load_shuffle_state(self):
         """Load shuffle state from file"""
         try:
-            with open('shuffle_state.json', 'r') as f:
+            app_data_dir = get_app_data_dir()
+            shuffle_state_file = os.path.join(app_data_dir, 'shuffle_state.json')
+            with open(shuffle_state_file, 'r') as f:
                 data = json.load(f)
                 shuffle_state = data.get('is_shuffle', False)
                 return shuffle_state
@@ -7176,7 +7842,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     def save_shuffle_state(self):
         """Save shuffle state to file"""
         try:
-            with open('shuffle_state.json', 'w') as f:
+            app_data_dir = get_app_data_dir()
+            shuffle_state_file = os.path.join(app_data_dir, 'shuffle_state.json')
+            with open(shuffle_state_file, 'w') as f:
                 json.dump({'is_shuffle': self.is_shuffle}, f)
                 print(f"Saved shuffle state: {self.is_shuffle}")
         except Exception as e:
@@ -7201,14 +7869,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             if self.current_index < len(self.playlist_treeview.get_children()):
                 current_item = self.playlist_treeview.get_children()[self.current_index]
                 self.playlist_treeview.item(current_item, tags=('current_song',))
-                
-                # Configure tag for highlighting - use peach color if peach theme is active
-                if hasattr(self, 'current_theme') and self.current_theme == 'peach':
-                    # Use a darker peach for playing song to distinguish from regular selection
-                    self.playlist_treeview.tag_configure('current_song', background='#FF9933')
-                else:
-                    # Default dark theme color
-                    self.playlist_treeview.tag_configure('current_song', background='#2d333b')
                 
                 # Auto-scroll to current song
                 self.playlist_treeview.see(current_item)
@@ -7295,15 +7955,17 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Check if song ended
                 if self.current_time >= self.total_time:
                     # Song ended, play next
-                    self.next_song()
+                    # Don't auto-advance if resuming from device switch
+                    if not getattr(self, '_resuming_from_device_switch', False):
+                        self.next_song()
                 else:
                     # Continue tracking
-                    self.root.after(1000, update_time)  # Update every second
+                    self.root.after(100, update_time)  # Update every 100ms for faster response
             elif self.is_playing and self.is_paused:
-                # If paused, check again in a second
-                self.root.after(1000, update_time)
+                # If paused, check again in 100ms
+                self.root.after(100, update_time)
         
-        self.root.after(1000, update_time)
+        self.root.after(100, update_time)
     
     def load_audio_for_analysis(self, audio_file):
         """Load audio file for real-time analysis using librosa (optimized for speed)"""
@@ -7334,12 +7996,14 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Load audio file using librosa for analysis
             try:
                 # Try loading with librosa (which uses soundfile) with different parameters
-                self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=22050, mono=True, res_type='kaiser_best')
+                # Use faster resampling method and limit duration to reduce loading time
+                # Load only first 60 seconds for visualization (enough for analysis)
+                self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=None, mono=True, res_type='linear', duration=60)
             except Exception as e:
                 print(f"librosa failed to load audio with kaiser_best: {e}")
                 try:
                     # Try with different resampling method
-                    self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=22050, mono=True, res_type='linear')
+                    self.current_audio_samples, self.audio_sample_rate = librosa.load(audio_file, sr=None, mono=True, res_type='linear')
                 except Exception as e2:
                     print(f"librosa failed with linear resampling: {e2}")
                     try:
@@ -7359,24 +8023,44 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                                 audio_data[offset:end] = chunk_data[:end-offset]
                                 offset = end
                             
-                            # Resample to 22050 Hz if needed
-                            if af.samplerate != 22050:
-                                import librosa
-                                self.current_audio_samples = librosa.resample(audio_data, orig_sr=af.samplerate, target_sr=22050)
-                                self.audio_sample_rate = 22050
-                            else:
-                                self.current_audio_samples = audio_data
-                                self.audio_sample_rate = af.samplerate
+                            # Keep original sample rate (like viz_multi.py)
+                            self.current_audio_samples = audio_data
+                            self.audio_sample_rate = af.samplerate
                                 
                     except Exception as e3:
                         print(f"Fallback audio loading also failed: {e3}")
                         # Last resort: create dummy audio data
-                        self.current_audio_samples = np.zeros(22050 * 10, dtype=np.float32)  # 10 seconds of silence
-                        self.audio_sample_rate = 22050
+                        self.current_audio_samples = np.zeros(44100 * 10, dtype=np.float32)  # 10 seconds of silence
+                        self.audio_sample_rate = 44100
                         print("Using dummy audio data for visualization")
             self.audio_duration = len(self.current_audio_samples) / self.audio_sample_rate
             self.current_audio_file = audio_file
-            print(f"Audio loaded for analysis: {self.audio_duration:.2f}s at {self.audio_sample_rate}Hz")
+            
+            # Compute STFT data (like viz_multi.py) for accurate visualization
+            try:
+                # print("[STFT] Computing STFT data for visualization...")
+                window_type = "hann"
+                fft_size = self.viz_fft_size  # 2048
+                timer_resolution = self.viz_timer_resolution  # 33 ms
+                self.stft_hop_length = int((timer_resolution / 1000.0) * self.audio_sample_rate)
+                self.stft_hop_length = max(128, min(self.stft_hop_length, fft_size // 2))
+                self.stft_data = np.abs(librosa.stft(
+                    self.current_audio_samples, 
+                    n_fft=fft_size, 
+                    hop_length=self.stft_hop_length, 
+                    window=window_type
+                ))
+                self.stft_sample_rate = self.audio_sample_rate
+                
+                # Detect beats (like viz_multi.py)
+                onset_env = librosa.onset.onset_strength(y=self.current_audio_samples, sr=self.audio_sample_rate)
+                beat_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=self.audio_sample_rate)
+                beat_times = librosa.frames_to_time(beat_frames, sr=self.audio_sample_rate)
+                
+                # print(f"Audio loaded for analysis: {self.audio_duration:.2f}s, SR: {self.audio_sample_rate}Hz, FFT: {fft_size}, Hop: {self.stft_hop_length}, Beats: {len(beat_frames)}")
+            except Exception as e:
+                print(f"[STFT] Failed to compute STFT: {e}")
+                self.stft_data = None
             
             # Always load with pygame mixer for visualization (even with MPV)
             try:
@@ -7396,26 +8080,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def start_audio_analysis(self):
         """Start thread to analyze real audio data for visualization"""
-        print(f"Starting audio analysis - samples available: {self.current_audio_samples is not None}")
+        # print(f"Starting audio analysis - samples available: {self.current_audio_samples is not None}")
         if self.current_audio_samples is None:
-            # Try to load audio again
-            if hasattr(self, 'current_song') and self.current_song:
-                self.load_audio_for_analysis(self.current_song)
-                if self.current_audio_samples is not None:
-                    print("Audio reload successful, starting analysis")
-                else:
-                    return
-            else:
-                return
+            # print("Audio not loaded yet, waiting for preload to complete...")
+            return
         
         if self.analyzing_audio:
-            print("Analysis already running, stopping first...")
+            # print("Analysis already running, stopping first...")
             self.stop_audio_analysis()
             
         self.analyzing_audio = True
         self.audio_thread = threading.Thread(target=self.analyze_real_audio, daemon=True)
         self.audio_thread.start()
-        print("Audio analysis thread started")
+        # print("Audio analysis thread started")
     
     def analyze_real_audio(self):
         """Analyze real audio data for visualization using pydub samples with beat detection"""
@@ -7424,85 +8101,64 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         while self.analyzing_audio and self.is_playing:
             if self.is_playing and not self.is_paused and self.current_audio_samples is not None:
                 try:
-                    # Try to get position from the active audio source
-                    try:
-                        if hasattr(self, 'player') and not getattr(self, 'use_pygame_fallback', True):
-                            # Get position from MPV for accurate sync
-                            time_pos = self.player.time_pos
-                            if time_pos is not None and time_pos >= 0:
-                                current_time = time_pos
-                            else:
-                                current_time = self.current_time
-                        else:
-                            # Fallback to pygame mixer
+                    # Use STFT data if available (like viz_multi.py)
+                    if self.stft_data is not None and self.stft_hop_length is not None:
+                        try:
+                            # Get position from pygame.mixer (like viz_multi.py)
                             pos_ms = pygame.mixer.music.get_pos()
-                            if pos_ms >= 0:
-                                current_time = pos_ms / 1000.0
-                            else:
-                                current_time = self.current_time
-                    except:
-                        current_time = self.current_time  # Fallback to our time tracking
-                    
-                    # Only analyze if we have valid time and audio
-                    if 0 <= current_time < self.audio_duration:
-                        # Calculate sample position with better sync
-                        self.sample_position = int(current_time * self.audio_sample_rate)
-                        
-                        # Use overlapping windows for smoother analysis (like Web Audio API)
-                        window_size = 1024  # Smaller window for better responsiveness
-                        hop_size = 512  # 50% overlap
-                        
-                        # Extract multiple windows around current position for better analysis
-                        windows_to_analyze = 3
-                        all_freq_bands = []
-                        
-                        for w in range(windows_to_analyze):
-                            window_offset = (w - windows_to_analyze // 2) * hop_size
-                            start_sample = max(0, self.sample_position + window_offset - window_size // 2)
-                            end_sample = min(len(self.current_audio_samples), self.sample_position + window_offset + window_size // 2)
+                            is_busy = pygame.mixer.music.get_busy()
                             
-                            if end_sample > start_sample and (end_sample - start_sample) >= window_size:
-                                # Extract audio window
-                                audio_window = self.current_audio_samples[start_sample:end_sample]
+                            # Debug occasionally
+                            if not hasattr(self, '_pos_debug_counter'):
+                                self._pos_debug_counter = 0
+                            self._pos_debug_counter += 1
+                            
+                            if pos_ms >= 0:
+                                elapsed_time = pos_ms / 1000.0
+                            else:
+                                elapsed_time = 0
+                            
+                            # Calculate frame index (EXACT viz_multi.py logic)
+                            frame_idx = int((elapsed_time * self.stft_sample_rate) / self.stft_hop_length)
+                            
+                            if frame_idx >= self.stft_data.shape[1]:
+                                frame_idx = self.stft_data.shape[1] - 1
+                            
+                            if frame_idx >= 0:
+                                # Get spectrum for this frame
+                                spectrum = self.stft_data[:, frame_idx]
                                 
-                                # Pad if necessary to get exact window size
-                                if len(audio_window) < window_size:
-                                    audio_window = np.pad(audio_window, (0, window_size - len(audio_window)), 'constant')
+                                # Convert to frequency bands using viz_multi.py logic
+                                freq_bands = self.fft_to_frequency_bands(spectrum, self.stft_sample_rate)
                                 
-                                # Apply window function (Hanning) to reduce spectral leakage
-                                window_function = np.hanning(window_size)
-                                audio_window = audio_window * window_function
+                                # Apply scaling (adjusted for smaller canvas size)
+                                # viz_multi uses 0.001 for large canvas, tinytunez needs higher for small canvas
+                                freq_bands = freq_bands * 0.12  # Reduced to prevent bars from reaching top
+                                freq_bands = freq_bands * self.viz_gain  # Apply gain (1.2)
                                 
-                                # Apply FFT (like Web Audio API)
-                                fft_result = np.fft.fft(audio_window[:window_size])
-                                magnitude = np.abs(fft_result[:window_size // 2])
+                                # Add headroom damping to prevent bars from filling entire screen
+                                freq_bands = freq_bands * 0.7
                                 
-                                # Convert to 32 frequency bands (like Winamp)
-                                freq_bands = self.fft_to_frequency_bands(magnitude, self.audio_sample_rate)
-                                
-                                # Normalize to 0-1 range
-                                if np.max(freq_bands) > 0:
-                                    freq_bands = freq_bands / np.max(freq_bands)
+                                # Apply soft-knee limiter (viz_multi.py style)
+                                if self.viz_use_limiter:
+                                    limiter_ratio = 10 ** (self.viz_limiter_threshold_db / 20.0)
+                                    over_threshold = freq_bands > limiter_ratio
+                                    if np.any(over_threshold):
+                                        excess = freq_bands[over_threshold] - limiter_ratio
+                                        freq_bands[over_threshold] = limiter_ratio + (excess * 0.5)
                                 
                                 freq_bands = np.clip(freq_bands, 0, 1)
-                                all_freq_bands.append(freq_bands)
-                        
-                        # Average across windows for smoothness but keep responsiveness
-                        if all_freq_bands:
-                            freq_bands = np.mean(all_freq_bands, axis=0)
-                            
-                            # Apply beat detection enhancement
-                            freq_bands = self.enhance_beat_response(freq_bands)
-                            
-                            self.audio_data = freq_bands.tolist()
-                            
-                            # Debug: Check if we're getting data
-                            if len(self.audio_data) > 0:
-                                max_amplitude = max(self.audio_data)
-                                if max_amplitude > 0.01:  # Only print occasionally if there's actual signal
-                                    if not hasattr(self, 'viz_debug_counter'):
-                                        self.viz_debug_counter = 0
-                                    self.viz_debug_counter += 1
+                                self.audio_data = freq_bands.tolist()
+                                
+                                # Debug: Print audio data occasionally
+                                if not hasattr(self, '_audio_debug_counter'):
+                                    self._audio_debug_counter = 0
+                                self._audio_debug_counter += 1
+                        except Exception as e:
+                            print(f"Error using STFT data: {e}")
+                    else:
+                        # Fallback: No STFT data available
+                        pass
                     
                 except Exception as e:
                     print(f"Error in audio analysis: {e}")
@@ -7529,44 +8185,65 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         return enhanced_bands
     
     def fft_to_frequency_bands(self, magnitude, sample_rate):
-        """Convert FFT magnitude to 32 frequency bands like Winamp"""
-        # Create 32 logarithmic frequency bands (like Winamp)
-        bands = np.zeros(32)
+        """Convert FFT magnitude to 32 frequency bands using viz_multi.py's EXACT Constant-Q logic"""
+        num_bars = self.viz_num_bars  # 32
+        freq_bins = len(magnitude)
+        bar_values = np.zeros(num_bars)
         
-        # Define frequency ranges for each band (logarithmic scale)
-        min_freq = 20  # 20 Hz (bottom of human hearing)
-        max_freq = sample_rate // 2  # Nyquist frequency
+        # viz_multi.py's Constant-Q with Winamp Style spacing (lines 217-225)
+        # freq_scale_log = False (linear), band_spacing = "Winamp Style"
+        freq_power = 1.0  # Linear scale with Winamp spacing (Constant-Q)
         
-        # Generate frequency bins for FFT correctly
-        freq_bins = np.linspace(0, sample_rate // 2, len(magnitude))
-        
-        for i in range(32):
-            # Calculate frequency range for this band
-            log_min = np.log10(min_freq)
-            log_max = np.log10(max_freq)
-            band_log_min = log_min + (log_max - log_min) * i / 32
-            band_log_max = log_min + (log_max - log_min) * (i + 1) / 32
-            band_min = 10 ** band_log_min
-            band_max = 10 ** band_log_max
+        for i in range(num_bars):
+            # Calculate frequency bin range for this bar (viz_multi.py exact logic)
+            freq_ratio = (i / num_bars) ** freq_power
+            start_idx = int(freq_ratio * freq_bins * 0.5)
+            end_idx = int(((i + 1) / num_bars) ** freq_power * freq_bins * 0.5)
             
-            # Find frequency bins in this range
-            band_mask = (freq_bins >= band_min) & (freq_bins <= band_max)
+            # Bounds checking
+            if end_idx > freq_bins:
+                end_idx = freq_bins
+            if start_idx >= end_idx:
+                end_idx = start_idx + 1
             
-            if np.any(band_mask):
-                # Average magnitude in this frequency band
-                bands[i] = np.mean(magnitude[band_mask])
-            else:
-                # If no bins in range, use nearest bin
-                if band_min < freq_bins[0]:
-                    bands[i] = magnitude[0]
-                elif band_max > freq_bins[-1]:
-                    bands[i] = magnitude[-1]
+            # Average magnitude in this frequency range
+            bar_values[i] = np.mean(magnitude[start_idx:end_idx])
+        
+        # Apply decoder EQ (Logarithmic) - viz_multi.py lines 252-268
+        freq_weights = np.ones(num_bars)
+        
+        if self.viz_decoder_eq == "Logarithmic":
+            for i in range(num_bars):
+                # Calculate frequency for this bar (linear scale)
+                freq = self.viz_freq_range_min + (self.viz_freq_range_max - self.viz_freq_range_min) * (i / num_bars)
+                
+                # Apply frequency-dependent weights
+                if freq < 100:
+                    freq_weights[i] *= 0.5
+                elif freq < 500:
+                    freq_weights[i] *= 0.8
+                elif freq < 3000:
+                    freq_weights[i] *= 1.3
+                elif freq < 8000:
+                    freq_weights[i] *= 1.2
                 else:
-                    # Find closest bin
-                    closest_idx = np.argmin(np.abs(freq_bins - band_min))
-                    bands[i] = magnitude[closest_idx]
+                    freq_weights[i] *= 0.9
         
-        return bands
+        # Apply spectrum tilt (3.0 dB/Oct) - viz_multi.py lines 270-279
+        if self.viz_spectrum_tilt > 0:
+            for i in range(num_bars):
+                # Calculate frequency for this bar (linear scale)
+                freq = self.viz_freq_range_min + (self.viz_freq_range_max - self.viz_freq_range_min) * (i / num_bars)
+                
+                # Calculate tilt based on octaves from 1kHz
+                octaves_from_1khz = np.log2(freq / 1000.0)
+                tilt_db = self.viz_spectrum_tilt * octaves_from_1khz
+                freq_weights[i] *= 10 ** (tilt_db / 20.0)
+        
+        # Apply all frequency weights
+        bar_values = bar_values * freq_weights
+        
+        return bar_values
     
     def stop_audio_analysis(self):
         """Stop the audio analysis thread"""
@@ -7575,40 +8252,274 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         if self.audio_thread and self.audio_thread.is_alive():
             self.audio_thread.join(timeout=1.0)  # Wait for thread to finish
     
+    def init_visualization_bars(self, force_recreate=False):
+        """Initialize visualization bars on startup to show empty bars"""
+        if not hasattr(self, 'visualization_canvas'):
+            return
+        
+        # Get canvas dimensions
+        width = self.visualization_canvas.winfo_width()
+        height = self.visualization_canvas.winfo_height()
+        
+        if width <= 1 or height <= 1:
+            # Canvas not ready yet, try again
+            self.root.after(200, self.init_visualization_bars)
+            return
+        
+        # If bars already exist and we're not forcing recreation, just return
+        if not force_recreate and hasattr(self, 'viz_bars') and len(self.viz_bars) > 0:
+            return
+        
+        # Initialize bar arrays
+        num_bars = 32
+        bar_spacing = self.viz_bar_spacing
+        bar_width = max(1, (width - (num_bars + 1) * bar_spacing) // num_bars)
+        
+        # Preserve existing peaks if they exist, otherwise initialize to zero
+        if not hasattr(self, 'bar_peaks'):
+            self.bar_peaks = [0] * num_bars
+        if not hasattr(self, 'bar_levels'):
+            self.bar_levels = [0] * num_bars
+        
+        # Clear existing canvas items if force_recreate
+        if force_recreate and hasattr(self, 'viz_bars'):
+            for bar in self.viz_bars:
+                if isinstance(bar, list):
+                    for segment in bar:
+                        self.visualization_canvas.delete(segment)
+                else:
+                    self.visualization_canvas.delete(bar)
+        if force_recreate and hasattr(self, 'viz_peaks'):
+            for peak in self.viz_peaks:
+                self.visualization_canvas.delete(peak)
+        
+        self.viz_bars = []
+        self.viz_peaks = []
+        
+        # Create bars based on theme
+        if self.viz_theme == "segmented":
+            # LED-style segmented bars
+            segment_height = self.viz_segment_height  # 2
+            max_segments = height // (segment_height * 2)  # Max segments with gaps
+            off_color = self.get_bar_off_color()
+            
+            for i in range(num_bars):
+                x1 = i * (bar_width + bar_spacing) + bar_spacing
+                x2 = x1 + bar_width
+                
+                # Create segment rectangles for this bar
+                bar_segments = []
+                for seg in range(max_segments):
+                    seg_y = height - (seg * segment_height * 2) - segment_height
+                    segment = self.visualization_canvas.create_rectangle(
+                        x1, seg_y, x2, seg_y + segment_height,
+                        fill=off_color, outline=""
+                    )
+                    bar_segments.append(segment)
+                self.viz_bars.append(bar_segments)
+                
+                # Create peak indicator (visible at bottom as yellow line)
+                peak = self.visualization_canvas.create_rectangle(
+                    x1, height - 2, x2, height,
+                    fill="#ffff00", outline=""  # Yellow peaks at bottom
+                )
+                self.viz_peaks.append(peak)
+        else:
+            # Basic non-segmented bars
+            for i in range(num_bars):
+                x1 = i * (bar_width + bar_spacing) + bar_spacing
+                x2 = x1 + bar_width
+                
+                # Create single rectangle for this bar
+                bar = self.visualization_canvas.create_rectangle(
+                    x1, height, x2, height,  # Start at bottom (zero height)
+                    fill="#00ff00", outline="",  # Green bars
+                    tags=f"bar_{i}"
+                )
+                self.viz_bars.append(bar)
+                
+                # Create peak indicator (visible at bottom as yellow line)
+                peak = self.visualization_canvas.create_rectangle(
+                    x1, height - 2, x2, height,
+                    fill="#ffff00", outline=""  # Yellow peaks at bottom
+                )
+                self.viz_peaks.append(peak)
+    
     def start_visualization(self):
         """Start the audio visualization"""
         self.visualization_running = True
         if hasattr(self, 'visualization_canvas'):
-            # Force complete canvas recreation
-            try:
-                # Clear all canvas items
-                self.visualization_canvas.delete("all")
-                # Clear our references to force recreation
-                if hasattr(self, 'viz_bars'):
-                    self.viz_bars.clear()
-                if hasattr(self, 'viz_peaks'):
-                    self.viz_peaks.clear()
-                # Force canvas to be visible by repacking it
-                self.visualization_canvas.pack_forget()
-                self.visualization_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            except Exception as e:
-                pass  # Ignore errors
-            # Start the animation loop
+            # Don't clear bars - just start animating them
+            # Start the animation loop immediately (don't wait for audio analysis)
             self.animate_visualization()
+    
+    def set_viz_theme(self, theme):
+        """Switch visualization theme (basic or segmented)"""
+        self.viz_theme = theme
+        self.save_viz_preferences()
+        
+        # Clear existing canvas items
+        if hasattr(self, 'viz_bars'):
+            for bar in self.viz_bars:
+                if isinstance(bar, list):
+                    # Segmented bar (list of segments)
+                    for segment in bar:
+                        self.visualization_canvas.delete(segment)
+                else:
+                    # Basic bar (single rectangle)
+                    self.visualization_canvas.delete(bar)
+            self.viz_bars = []
+        
+        if hasattr(self, 'viz_peaks'):
+            for peak in self.viz_peaks:
+                self.visualization_canvas.delete(peak)
+            self.viz_peaks = []
+        
+        # Reinitialize visualization bars with new theme
+        self.init_visualization_bars(force_recreate=True)
+    
+    def set_viz_color(self, color_scheme):
+        """Switch visualization color scheme"""
+        self.viz_color_scheme = color_scheme
+        self.save_viz_preferences()
+    
+    def save_viz_preferences(self):
+        """Save visualization preferences to file"""
+        try:
+            preferences = {
+                'theme': self.viz_theme,
+                'color_scheme': self.viz_color_scheme
+            }
+            app_data_dir = get_app_data_dir()
+            viz_preferences_file = os.path.join(app_data_dir, 'viz_preferences.json')
+            with open(viz_preferences_file, 'w') as f:
+                json.dump(preferences, f)
+        except Exception as e:
+            print(f"Error saving visualization preferences: {e}")
+    
+    def load_viz_preferences(self):
+        """Load visualization preferences from file"""
+        try:
+            app_data_dir = get_app_data_dir()
+            viz_preferences_file = os.path.join(app_data_dir, 'viz_preferences.json')
+            if os.path.exists(viz_preferences_file):
+                with open(viz_preferences_file, 'r') as f:
+                    preferences = json.load(f)
+                    self.viz_theme = preferences.get('theme', 'basic')
+                    self.viz_color_scheme = preferences.get('color_scheme', 'green')
+        except Exception as e:
+            print(f"Error loading visualization preferences: {e}")
+            # Use defaults if loading fails
+            self.viz_theme = 'basic'
+            self.viz_color_scheme = 'green'
+    
+    def get_bar_color(self, intensity, color_scheme=None):
+        """Get bar color based on intensity (0.0 to 1.0) and color scheme"""
+        if color_scheme is None:
+            color_scheme = self.viz_color_scheme
+        
+        if color_scheme == "green":
+            # Green gradient from dark green to bright green
+            green_val = int(100 + 155 * intensity)
+            return f"#00{green_val:02x}00"
+        elif color_scheme == "green-yellow-red":
+            # Green at bottom, yellow at 70%, red at 90%
+            if intensity < 0.7:
+                # Green gradient
+                green_val = int(100 + 155 * (intensity / 0.7))
+                return f"#00{green_val:02x}00"
+            elif intensity < 0.9:
+                # Yellow gradient
+                yellow_intensity = (intensity - 0.7) / 0.2
+                green_val = 255
+                red_val = int(255 * yellow_intensity)
+                return f"#{red_val:02x}{green_val:02x}00"
+            else:
+                # Red gradient
+                red_intensity = (intensity - 0.9) / 0.1
+                red_val = 255
+                green_val = int(255 * (1 - red_intensity))
+                return f"#{red_val:02x}{green_val:02x}00"
+        elif color_scheme == "fire":
+            # Fire: red at bottom, orange, yellow at top
+            if intensity < 0.5:
+                # Red gradient
+                red_val = int(100 + 155 * (intensity / 0.5))
+                green_val = 0
+                return f"#{red_val:02x}{green_val:02x}00"
+            elif intensity < 0.8:
+                # Orange gradient
+                orange_intensity = (intensity - 0.5) / 0.3
+                red_val = 255
+                green_val = int(165 * orange_intensity)
+                return f"#{red_val:02x}{green_val:02x}00"
+            else:
+                # Yellow gradient
+                yellow_intensity = (intensity - 0.8) / 0.2
+                red_val = 255
+                green_val = int(165 + 90 * yellow_intensity)
+                return f"#{red_val:02x}{green_val:02x}00"
+        else:
+            # Default to green
+            green_val = int(100 + 155 * intensity)
+            return f"#00{green_val:02x}00"
+    
+    def get_bar_off_color(self, color_scheme=None):
+        """Get the off color (when segment is not lit) based on color scheme"""
+        if color_scheme is None:
+            color_scheme = self.viz_color_scheme
+        
+        if color_scheme == "green":
+            return "#003300"
+        elif color_scheme == "green-yellow-red":
+            return "#331100"
+        elif color_scheme == "fire":
+            return "#330000"
+        else:
+            return "#003300"
+    
+    def update_viz_context_menu_theme(self):
+        """Update context menu colors to match current app theme"""
+        current_theme = getattr(self, 'current_theme', 'dark')
+        if current_theme == 'peach' and PEACH_THEME_AVAILABLE:
+            theme = PEACH_THEME
+            self.viz_context_menu.configure(
+                bg=theme['bg_header'],
+                fg=theme['text_primary'],
+                activebackground=theme['primary'],
+                activeforeground=theme['text_on_primary'],
+                borderwidth=0
+            )
+        else:
+            # Dark theme colors
+            self.viz_context_menu.configure(
+                bg='#2d333b',
+                fg='#c9d1d9',
+                activebackground='#388bfd',
+                activeforeground='#ffffff',
+                borderwidth=0
+            )
+    
+    def update_viz_context_menu_checkmarks(self):
+        """Update check marks in context menu to show selected options"""
+        # Update bar style check marks
+        self.viz_context_menu.entryconfig(0, label=f"{'✓ ' if self.viz_theme == 'basic' else ''}Bar Style: Basic (Non-segmented)")
+        self.viz_context_menu.entryconfig(1, label=f"{'✓ ' if self.viz_theme == 'segmented' else ''}Bar Style: Segmented (LED-style)")
+        
+        # Update color check marks
+        self.viz_context_menu.entryconfig(3, label=f"{'✓ ' if self.viz_color_scheme == 'green' else ''}Color: Green")
+        self.viz_context_menu.entryconfig(4, label=f"{'✓ ' if self.viz_color_scheme == 'green-yellow-red' else ''}Color: Green-Yellow-Red")
+        self.viz_context_menu.entryconfig(5, label=f"{'✓ ' if self.viz_color_scheme == 'fire' else ''}Color: Fire")
     
     def stop_visualization(self):
         """Stop the audio visualization"""
         self.visualization_running = False
-        if hasattr(self, 'visualization_canvas'):
-            self.visualization_canvas.delete("all")
+        # Don't delete canvas items - just stop the animation loop
+        # The items will be reused when visualization starts again
     
     def animate_visualization(self):
         """Create Winamp-style visualization with many bars and peak effects"""
         if not self.visualization_running:
-            return
-        
-        # Check if visualization canvas exists
-        if not hasattr(self, 'visualization_canvas'):
             return
         
         # Get canvas dimensions
@@ -7617,47 +8528,71 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         if width <= 1:  # Canvas not yet rendered
             self.root.after(200, self.animate_visualization)
+            self._active_anim_count -= 1
             return
         
         # Winamp-style setup
         num_bars = 32  # Winamp typically has 32+ bars
-        bar_spacing = 1
+        bar_spacing = self.viz_bar_spacing  # Use consistent spacing
         bar_width = max(1, (width - (num_bars + 1) * bar_spacing) // num_bars)
         
-        # Initialize peak holders and canvas items
+        # Initialize peak holders and canvas items ONLY if they don't exist
+        # NEVER delete and recreate - just reuse existing items
         if not hasattr(self, 'bar_peaks'):
             self.bar_peaks = [0] * num_bars
         if not hasattr(self, 'bar_levels'):
             self.bar_levels = [0] * num_bars
-        if not hasattr(self, 'viz_bars') or len(self.viz_bars) != num_bars:
-            # Clear existing items if they exist
-            if hasattr(self, 'viz_bars'):
-                for bar in self.viz_bars:
-                    self.visualization_canvas.delete(bar)
-                self.viz_bars.clear()
-            if hasattr(self, 'viz_peaks'):
-                for peak in self.viz_peaks:
-                    self.visualization_canvas.delete(peak)
-                self.viz_peaks.clear()
-            
-            # Create canvas items once and reuse them
+        if not hasattr(self, 'viz_bars'):
             self.viz_bars = []
+        if not hasattr(self, 'viz_peaks'):
             self.viz_peaks = []
-            for i in range(num_bars):
-                x1 = i * (bar_width + bar_spacing) + bar_spacing
-                x2 = x1 + bar_width
-                # Create bar item (will be updated with coords)
-                bar = self.visualization_canvas.create_rectangle(
-                    x1, height, x2, height,
-                    fill="#00ff00", outline=""
-                )
-                self.viz_bars.append(bar)
-                # Create peak item
-                peak = self.visualization_canvas.create_rectangle(
-                    x1, height, x2, height,
-                    fill="#ffff00", outline=""
-                )
-                self.viz_peaks.append(peak)
+        
+        # Only create bars if they don't exist yet (init_visualization_bars should have created them)
+        if len(self.viz_bars) == 0:
+            if self.viz_theme == "segmented":
+                segment_height = self.viz_segment_height  # 2
+                max_segments = height // (segment_height * 2)
+                
+                for i in range(num_bars):
+                    x1 = i * (bar_width + bar_spacing) + bar_spacing
+                    x2 = x1 + bar_width
+                    
+                    # Create segment rectangles for this bar
+                    bar_segments = []
+                    for seg in range(max_segments):
+                        seg_y = height - (seg * segment_height * 2) - segment_height
+                        segment = self.visualization_canvas.create_rectangle(
+                            x1, seg_y, x2, seg_y + segment_height,
+                            fill="#000000", outline=""
+                        )
+                        bar_segments.append(segment)
+                    self.viz_bars.append(bar_segments)
+                    
+                    # Create peak item
+                    peak = self.visualization_canvas.create_rectangle(
+                        x1, height, x2, height,
+                        fill="#ffff00", outline=""
+                    )
+                    self.viz_peaks.append(peak)
+            else:
+                # Basic theme
+                for i in range(num_bars):
+                    x1 = i * (bar_width + bar_spacing) + bar_spacing
+                    x2 = x1 + bar_width
+                    
+                    # Create single rectangle for this bar
+                    bar = self.visualization_canvas.create_rectangle(
+                        x1, height, x2, height,  # Start at bottom (zero height)
+                        fill="#00ff00", outline=""
+                    )
+                    self.viz_bars.append(bar)
+                    
+                    # Create peak item
+                    peak = self.visualization_canvas.create_rectangle(
+                        x1, height, x2, height,
+                        fill="#ffff00", outline=""
+                    )
+                    self.viz_peaks.append(peak)
         
         # Ensure arrays have correct size
         if len(self.bar_peaks) != num_bars:
@@ -7665,84 +8600,128 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         if len(self.bar_levels) != num_bars:
             self.bar_levels = [0] * num_bars
         
-        # Use real audio data if available, otherwise show placeholder animation
+        # Initialize peak hold counters if needed
+        if not hasattr(self, 'viz_peak_hold_counters') or len(self.viz_peak_hold_counters) != num_bars:
+            self.viz_peak_hold_counters = [0] * num_bars
+        
+        # Use real audio data if available
         if self.audio_data and len(self.audio_data) >= num_bars and not self.is_paused:
-            
-            # Use actual audio analysis data - very responsive transitions
+            # Apply viz_multi.py's EXACT attack/decay logic (lines 331-334)
             for i in range(num_bars):
                 amplitude = self.audio_data[i]
-                target_level = amplitude * height * 0.95
-                # Very responsive transitions (20% old, 80% new)
-                self.bar_levels[i] = self.bar_levels[i] * 0.2 + target_level * 0.8
+                target_level = amplitude * height
                 
-                # Peak effect - responsive decay for beat following
+                # viz_multi.py attack/decay logic (EXACT formula)
+                if amplitude > (self.bar_levels[i] / height):
+                    # Attack: blend towards target (viz_multi.py line 331)
+                    self.bar_levels[i] = target_level * self.viz_attack + self.bar_levels[i] * (1 - self.viz_attack)
+                else:
+                    # Decay: smooth fall with acceleration (viz_multi.py line 333-334)
+                    effective_decay = self.viz_decay ** self.viz_falloff_accel
+                    self.bar_levels[i] = target_level * (1 - effective_decay) + self.bar_levels[i] * effective_decay
+                
+                # Clamp to canvas height to prevent exceeding bounds
+                self.bar_levels[i] = min(self.bar_levels[i], height)
+                
+                # Peak tracking (viz_multi.py style with hold time)
                 if self.bar_levels[i] > self.bar_peaks[i]:
                     self.bar_peaks[i] = self.bar_levels[i]
+                    self.viz_peak_hold_counters[i] = self.viz_peak_hold_time
                 else:
-                    self.bar_peaks[i] = max(0, self.bar_peaks[i] - height * 0.06)  # Faster decay
+                    if self.viz_peak_hold_counters[i] > 0:
+                        self.viz_peak_hold_counters[i] -= 1
+                    else:
+                        self.bar_peaks[i] *= self.viz_peak_decay
+        
+        # Canvas rendering
+        
+        if self.viz_theme == "segmented":
+            # Segmented LED-style rendering
+            segment_height = self.viz_segment_height  # 2
+            for i in range(min(num_bars, len(self.viz_bars), len(self.viz_peaks))):
+                # Calculate positions
+                x1 = i * (bar_width + bar_spacing) + bar_spacing
+                x2 = x1 + bar_width
+                
+                # Update main bar (segmented)
+                bar_height = int(self.bar_levels[i])
+                scaled_height = min(bar_height, height)  # Clamp to canvas height
+                bar_segments = self.viz_bars[i]
+                num_segments_to_light = scaled_height // (segment_height * 2)
+                
+                # Color segments based on height
+                for seg_idx, segment in enumerate(bar_segments):
+                    if seg_idx < num_segments_to_light:
+                        # Light up this segment
+                        intensity = min(1.0, (seg_idx + 1) / len(bar_segments))
+                        color = self.get_bar_color(intensity)
+                        self.visualization_canvas.itemconfig(segment, fill=color, outline="")
+                    else:
+                        # Turn off this segment
+                        off_color = self.get_bar_off_color()
+                        self.visualization_canvas.itemconfig(segment, fill=off_color, outline="")
+                
+                # Update peak indicator
+                if self.bar_peaks[i] > 2:
+                    peak_y = height - int(self.bar_peaks[i])
+                    self.visualization_canvas.coords(
+                        self.viz_peaks[i],
+                        x1, peak_y, x2, peak_y + 2
+                    )
+                    self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#ffff00")
+                else:
+                    # Keep peak at bottom when no audio data
+                    self.visualization_canvas.coords(
+                        self.viz_peaks[i],
+                        x1, height - 2, x2, height
+                    )
+                    self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#ffff00")
         else:
-            # When no data yet, show a gentle "waiting" animation
-            import time
-            wait_time = time.time()
-            for i in range(num_bars):
-                # Gentle wave animation while waiting for audio data
-                wave = (math.sin(wait_time * 2 + i * 0.2) + 1) * 0.1  # Small gentle wave
-                target_level = wave * height * 0.3  # 30% max height
-                self.bar_levels[i] = self.bar_levels[i] * 0.9 + target_level * 0.1  # Very smooth transition
+            # Basic non-segmented rendering
+            for i in range(min(num_bars, len(self.viz_bars), len(self.viz_peaks))):
+                # Calculate positions
+                x1 = i * (bar_width + bar_spacing) + bar_spacing
+                x2 = x1 + bar_width
                 
-                # Gentle peak effect
-                if self.bar_levels[i] > self.bar_peaks[i]:
-                    self.bar_peaks[i] = self.bar_levels[i]
+                # Update main bar (single rectangle)
+                bar_height = int(self.bar_levels[i])
+                scaled_height = min(bar_height, height)  # Clamp to canvas height
+                bar = self.viz_bars[i]
+                
+                # Update bar coordinates
+                self.visualization_canvas.coords(
+                    bar,
+                    x1, height - scaled_height, x2, height
+                )
+                
+                # Update bar color based on height (using color scheme)
+                intensity = min(1.0, scaled_height / height)
+                color = self.get_bar_color(intensity)
+                self.visualization_canvas.itemconfig(bar, fill=color, outline="")
+                
+                # Update peak indicator
+                if self.bar_peaks[i] > 2:
+                    peak_y = height - int(self.bar_peaks[i])
+                    self.visualization_canvas.coords(
+                        self.viz_peaks[i],
+                        x1, peak_y, x2, peak_y + 2
+                    )
+                    self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#ffff00")
                 else:
-                    self.bar_peaks[i] = max(0, self.bar_peaks[i] - height * 0.01)  # Very slow decay
+                    # Keep peak at bottom when no audio data
+                    self.visualization_canvas.coords(
+                        self.viz_peaks[i],
+                        x1, height - 2, x2, height
+                    )
+                    self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#ffff00")
         
-        # Debug: Check if canvas items exist
-        # Update existing canvas items instead of recreating them
-        for i in range(min(num_bars, len(self.viz_bars), len(self.viz_peaks))):
-            # Calculate positions
-            x1 = i * (bar_width + bar_spacing) + bar_spacing
-            x2 = x1 + bar_width
-            
-            # Update main bar
-            bar_height = int(self.bar_levels[i])
-            if bar_height > 0:
-                # Update bar coordinates and color
-                self.visualization_canvas.coords(
-                    self.viz_bars[i],
-                    x1, height - bar_height, x2, height
-                )
-                # Simple green color (no gradient for performance)
-                intensity = min(1.0, bar_height / (height * 0.8))
-                green_val = int(100 + 155 * intensity)  # Range from dark to bright green
-                color = f"#00{green_val:02x}00"
-                self.visualization_canvas.itemconfig(self.viz_bars[i], fill=color)
-            else:
-                # Hide bar if no height
-                self.visualization_canvas.coords(
-                    self.viz_bars[i],
-                    x1, height, x2, height
-                )
-                self.visualization_canvas.itemconfig(self.viz_bars[i], fill="#003300")
-            
-            # Update peak indicator
-            if self.bar_peaks[i] > 2:
-                peak_y = height - int(self.bar_peaks[i])
-                self.visualization_canvas.coords(
-                    self.viz_peaks[i],
-                    x1, peak_y, x2, peak_y + 1
-                )
-                self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#ffff00")
-            else:
-                # Hide peak if too small
-                self.visualization_canvas.coords(
-                    self.viz_peaks[i],
-                    x1, height, x2, height
-                )
-                self.visualization_canvas.itemconfig(self.viz_peaks[i], fill="#000000")
-        
-        # Update at reasonable speed for performance (reduced from 30 to 20 FPS)
+        # Update at viz_multi.py framerate (35 FPS = ~29ms per frame)
         if self.visualization_running:
-            self.root.after(50, self.animate_visualization)  # 20 FPS for better performance
+            self.root.after(29, self.animate_visualization)  # 35 FPS like viz_multi.py
+        
+        # Decrement active animation count when loop exits
+        if hasattr(self, '_active_anim_count'):
+            self._active_anim_count -= 1
     
     def toggle_mute(self):
         if self.is_muted:
@@ -7771,6 +8750,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     def set_volume(self, value):
         self.volume = float(value) / 100
         self.volume_label.config(text=f"{int(float(value))}%")
+        # Save volume to settings
+        self.settings['volume'] = self.volume
+        self.save_settings()
         # Set volume if music is playing
         if self.is_playing or self.is_paused:
             if not self.is_muted:
@@ -7782,6 +8764,41 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                         pygame.mixer.music.set_volume(self.volume)
                 except:
                     pass
+
+    def volume_up(self):
+        """Increase volume by 5%"""
+        if hasattr(self, 'volume_slider'):
+            current_volume = self.volume_slider.get()
+            new_volume = min(100, current_volume + 5)
+            self.volume_slider.set(new_volume)
+            self.set_volume(new_volume)
+
+    def volume_down(self):
+        """Decrease volume by 5%"""
+        if hasattr(self, 'volume_slider'):
+            current_volume = self.volume_slider.get()
+            new_volume = max(0, current_volume - 5)
+            self.volume_slider.set(new_volume)
+            self.set_volume(new_volume)
+
+    def setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for media controls"""
+        # Previous = z
+        self.root.bind('z', lambda e: self.previous_song())
+        # Play = x
+        self.root.bind('x', lambda e: self.play_song())
+        # Pause = c
+        self.root.bind('c', lambda e: self.pause_song())
+        # Stop = v
+        self.root.bind('v', lambda e: self.stop_song())
+        # Next = b
+        self.root.bind('b', lambda e: self.next_song())
+        # Shuffle = s
+        self.root.bind('s', lambda e: self.toggle_shuffle())
+        # Volume up = Up arrow
+        self.root.bind('<Up>', lambda e: self.volume_up())
+        # Volume down = Down arrow
+        self.root.bind('<Down>', lambda e: self.volume_down())
             
     def toggle_lyrics(self):
         pass
@@ -8291,7 +9308,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     if hasattr(self, 'edit_lyrics_btn'):
                         self.edit_lyrics_btn.config(state=tk.NORMAL)
                     
-                    messagebox.showinfo("Success", f"Lyrics saved successfully!\n\nLocation: {save_path}")
+                    self.show_success_dialog(f"Lyrics saved successfully!\n\nLocation: {save_path}")
                     dialog.destroy()
                     # Maintain peach scrollbars when dialog closes
                     self.root.after(50, self.maintain_peach_scrollbars)
@@ -8350,8 +9367,554 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Maintain peach scrollbars after theme is applied
             self.maintain_peach_scrollbars()
         
+    def show_custom_message(self, title, message):
+        """Show a custom message dialog without system sound"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("400x150")
+        dialog.resizable(False, False)
+        
+        # Center the dialog
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Background color based on theme
+        is_peach = hasattr(self, 'current_theme') and self.current_theme == 'peach'
+        if is_peach and PEACH_THEME_AVAILABLE:
+            bg_color = PEACH_THEME['bg_header']
+            fg_color = PEACH_THEME['text_primary']
+            btn_bg = PEACH_THEME['button_bg']
+            btn_fg = PEACH_THEME['button_fg']
+        else:
+            bg_color = '#0d1117'
+            fg_color = '#f0f6fc'
+            btn_bg = '#238636'
+            btn_fg = '#ffffff'
+        
+        dialog.configure(bg=bg_color)
+        
+        # Message label
+        label = tk.Label(dialog, text=message, bg=bg_color, fg=fg_color, font=('Segoe UI', 10), wraplength=380, justify='center')
+        label.pack(expand=True, padx=20, pady=20)
+        
+        # OK button
+        ok_btn = tk.Button(dialog, text="OK", command=dialog.destroy, bg=btn_bg, fg=btn_fg, font=('Segoe UI', 10, 'bold'), relief='flat', padx=20, pady=5)
+        ok_btn.pack(pady=10)
+        
+        # Center dialog on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        dialog.wait_window()
+    
     def show_about(self):
-        messagebox.showinfo("About TinyTunez", " TinyTunez Music Player\n\nA modern music player with custom button icons\nFeaturing your custom assets\n\nVersion 3.0 Assets")
+        """Show custom About window with theme support (no sound)."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+            border_color = '#D4B5A0'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+            border_color = '#30363d'
+        
+        # Create custom Toplevel window
+        about_window = tk.Toplevel(self.root)
+        about_window.title("About TinyTunez")
+        about_window.geometry("400x300")
+        about_window.configure(bg=bg_color)
+        about_window.resizable(False, False)
+        
+        # Center the window
+        about_window.transient(self.root)
+        about_window.grab_set()
+        
+        # Main frame
+        main_frame = tk.Frame(about_window, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Title
+        title_label = tk.Label(
+            main_frame,
+            text="TinyTunez Music Player",
+            font=('Segoe UI', 16, 'bold'),
+            bg=bg_color,
+            fg=fg_color
+        )
+        title_label.pack(pady=(0, 10))
+        
+        # Version info
+        version_label = tk.Label(
+            main_frame,
+            text="Version 1.1.0",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg=fg_color
+        )
+        version_label.pack(pady=(0, 20))
+        
+        # Description
+        desc_label = tk.Label(
+            main_frame,
+            text="A modern music player with custom button icons\nFeaturing your custom assets",
+            font=('Segoe UI', 10),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER
+        )
+        desc_label.pack(pady=(0, 20))
+        
+        # Credit (clickable link)
+        # Use blue for link color in dark mode, darker orange for peach mode
+        link_color = '#4a9eff' if self.current_theme == 'dark' else '#D47A3A'
+        credit_label = tk.Label(
+            main_frame,
+            text="Icons by SumberRejeki (Flaticon)",
+            font=('Segoe UI', 9, 'underline'),
+            bg=bg_color,
+            fg=link_color,
+            justify=tk.CENTER,
+            cursor='hand2'
+        )
+        credit_label.pack(pady=(0, 30))
+        credit_label.bind('<Button-1>', lambda e: self.open_flaticon_link())
+        
+        # Close button
+        close_button = tk.Button(
+            main_frame,
+            text="Close",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=5,
+            command=about_window.destroy
+        )
+        close_button.pack()
+        
+        # Center window on screen
+        about_window.update_idletasks()
+        x = (about_window.winfo_screenwidth() // 2) - (about_window.winfo_width() // 2)
+        y = (about_window.winfo_screenheight() // 2) - (about_window.winfo_height() // 2)
+        about_window.geometry(f"+{x}+{y}")
+    
+    def open_flaticon_link(self):
+        """Open the Flaticon attribution link in browser."""
+        import webbrowser
+        webbrowser.open("https://www.flaticon.com/authors/sumberrejeki")
+    
+    def show_help_tips(self):
+        """Show custom Help/Tips window with multi-page support and 'Do not show again' checkbox."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+            border_color = '#D4B5A0'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+            border_color = '#30363d'
+        
+        # Help/Tips content pages
+        help_pages = [
+            {
+                'title': "What's New",
+                'content': '''Latest Updates & Fixes:
+
+• Fixed: Volume issue after pausing and switching songs
+• Fixed: Song skipping when switching audio devices
+• Fixed: Dynamic audio device change now works properly
+• Added: Custom Help & Tips window with multi-page support
+• Added: "Do not show again" checkbox for help window
+• Improved: Resume playback at current position after device switch
+
+Version 1.1.0'''
+            },
+            {
+                'title': 'Getting Started',
+                'content': '''Welcome to TinyTunez!
+
+• Add music by clicking File → Add Folder or Add Songs
+• Use the Play, Pause, Stop buttons to control playback
+• Click on a song in the playlist to play it
+• Use Next/Previous buttons to navigate songs
+• Adjust volume with the volume buttons'''
+            },
+            {
+                'title': 'Keyboard Shortcuts',
+                'content': '''Keyboard Shortcuts:
+
+• Space - Play/Pause
+• Arrow Up - Volume Up
+• Arrow Down - Volume Down
+• Arrow Right - Next Song
+• Arrow Left - Previous Song
+• M - Mute/Unmute
+• S - Toggle Shuffle'''
+            },
+            {
+                'title': 'Visualization',
+                'content': '''Visualization Options:
+
+• Switch between Basic and Segmented styles
+• Choose from Green or Fire color schemes
+• Visualization preferences are saved automatically
+• Peaks reset when song stops
+• Visualization starts immediately on song play'''
+            },
+            {
+                'title': 'Lyrics',
+                'content': '''Lyrics Features:
+
+• Lyrics auto-load from your lyrics folder
+• Karaoke mode highlights synced lyrics
+• Click Edit Lyrics to customize lyrics
+• Star important lyric lines for quick reference
+• Lyrics font size is adjustable'''
+            },
+            {
+                'title': 'Audio Devices',
+                'content': '''Audio Device Selection:
+
+• Choose from View → Audio Device
+• Select your preferred output device
+• Device selection persists after restart
+• Switch between WASAPI, DirectSound, etc.
+• Song resumes at current position when switching devices'''
+            }
+        ]
+        
+        # Create custom Toplevel window
+        help_window = tk.Toplevel(self.root)
+        help_window.title("Help & Tips")
+        help_window.geometry("600x490")
+        help_window.configure(bg=bg_color)
+        help_window.resizable(False, False)
+        
+        # Center the window
+        help_window.transient(self.root)
+        help_window.grab_set()
+        
+        # Main frame
+        main_frame = tk.Frame(help_window, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Current page index
+        current_page = [0]  # Use list to make it mutable in nested functions
+        
+        # Title label
+        title_label = tk.Label(
+            main_frame,
+            text=help_pages[current_page[0]]['title'],
+            font=('Segoe UI', 14, 'bold'),
+            bg=bg_color,
+            fg=fg_color
+        )
+        title_label.pack(pady=(0, 15))
+        
+        # Content text
+        content_text = tk.Text(
+            main_frame,
+            font=('Segoe UI', 11),
+            bg=bg_color,
+            fg=fg_color,
+            relief=tk.FLAT,
+            borderwidth=0,
+            wrap=tk.WORD,
+            height=12,
+            width=55,
+            padx=5,
+            pady=5
+        )
+        content_text.pack(pady=(0, 15))
+        content_text.insert(tk.END, help_pages[current_page[0]]['content'])
+        content_text.config(state=tk.DISABLED)
+        
+        # Page indicator
+        page_label = tk.Label(
+            main_frame,
+            text=f"Page {current_page[0] + 1} of {len(help_pages)}",
+            font=('Segoe UI', 9),
+            bg=bg_color,
+            fg=fg_color
+        )
+        page_label.pack(pady=(0, 10))
+        
+        # Navigation buttons frame
+        nav_frame = tk.Frame(main_frame, bg=bg_color)
+        nav_frame.pack(pady=(0, 15))
+        
+        def update_page():
+            """Update the content for the current page."""
+            content_text.config(state=tk.NORMAL)
+            content_text.delete(1.0, tk.END)
+            content_text.insert(tk.END, help_pages[current_page[0]]['content'])
+            content_text.config(state=tk.DISABLED)
+            title_label.config(text=help_pages[current_page[0]]['title'])
+            page_label.config(text=f"Page {current_page[0] + 1} of {len(help_pages)}")
+            
+            # Update button states
+            prev_button.config(state=tk.NORMAL if current_page[0] > 0 else tk.DISABLED)
+            next_button.config(state=tk.NORMAL if current_page[0] < len(help_pages) - 1 else tk.DISABLED)
+        
+        def next_page():
+            """Go to the next page."""
+            if current_page[0] < len(help_pages) - 1:
+                current_page[0] += 1
+                update_page()
+        
+        def prev_page():
+            """Go to the previous page."""
+            if current_page[0] > 0:
+                current_page[0] -= 1
+                update_page()
+        
+        # Previous button
+        prev_button = tk.Button(
+            nav_frame,
+            text="◀ Previous",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=5,
+            command=prev_page,
+            state=tk.DISABLED if current_page[0] == 0 else tk.NORMAL
+        )
+        prev_button.pack(side=tk.LEFT, padx=5)
+        
+        # Next button
+        next_button = tk.Button(
+            nav_frame,
+            text="Next ▶",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=5,
+            command=next_page,
+            state=tk.NORMAL if current_page[0] < len(help_pages) - 1 else tk.DISABLED
+        )
+        next_button.pack(side=tk.LEFT, padx=5)
+        
+        # Bottom frame for checkbox and close button
+        bottom_frame = tk.Frame(main_frame, bg=bg_color)
+        bottom_frame.pack(fill=tk.X, pady=(20, 10))
+        
+        # Do not show again checkbox
+        do_not_show_var = tk.BooleanVar(value=False)
+        def on_checkbox_change():
+            """Save the checkbox state."""
+            self.save_help_tips_preference(not do_not_show_var.get())
+        
+        checkbox = tk.Checkbutton(
+            bottom_frame,
+            text="Do not show again",
+            font=('Segoe UI', 9),
+            bg=bg_color,
+            fg=fg_color,
+            selectcolor=button_bg,
+            activebackground=bg_color,
+            activeforeground=fg_color,
+            variable=do_not_show_var,
+            command=on_checkbox_change,
+            relief=tk.FLAT,
+            borderwidth=0
+        )
+        checkbox.pack(side=tk.LEFT)
+        
+        # Load saved preference
+        show_help = self.get_help_tips_preference()
+        do_not_show_var.set(not show_help)
+        
+        # Close button
+        close_button = tk.Button(
+            bottom_frame,
+            text="Close",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=5,
+            command=help_window.destroy
+        )
+        close_button.pack(side=tk.RIGHT)
+        
+        # Center window on screen
+        help_window.update_idletasks()
+        x = (help_window.winfo_screenwidth() // 2) - (help_window.winfo_width() // 2)
+        y = (help_window.winfo_screenheight() // 2) - (help_window.winfo_height() // 2)
+        help_window.geometry(f"+{x}+{y}")
+    
+    def save_help_tips_preference(self, show_help):
+        """Save the help/tips 'show again' preference."""
+        try:
+            import json
+            app_data_dir = get_app_data_dir()
+            config_file = os.path.join(app_data_dir, 'help_tips_config.json')
+            with open(config_file, 'w') as f:
+                json.dump({'show_help_tips': show_help}, f)
+        except Exception as e:
+            print(f"Error saving help/tips preference: {e}")
+    
+    def get_help_tips_preference(self):
+        """Get the help/tips 'show again' preference. Returns True if should show, False otherwise."""
+        try:
+            import json
+            app_data_dir = get_app_data_dir()
+            config_file = os.path.join(app_data_dir, 'help_tips_config.json')
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    return config.get('show_help_tips', True)
+        except Exception as e:
+            print(f"Error loading help/tips preference: {e}")
+        return True  # Default to show help
+    
+    def save_version(self):
+        """Save the current version to detect updates."""
+        try:
+            import json
+            app_data_dir = get_app_data_dir()
+            version_file = os.path.join(app_data_dir, 'version.json')
+            with open(version_file, 'w') as f:
+                json.dump({'version': '1.1.0'}, f)
+        except Exception as e:
+            print(f"Error saving version: {e}")
+    
+    def get_saved_version(self):
+        """Get the saved version. Returns None if not found."""
+        try:
+            import json
+            app_data_dir = get_app_data_dir()
+            version_file = os.path.join(app_data_dir, 'version.json')
+            if os.path.exists(version_file):
+                with open(version_file, 'r') as f:
+                    config = json.load(f)
+                    return config.get('version', None)
+        except Exception as e:
+            print(f"Error loading version: {e}")
+        return None
+    
+    def is_first_install_or_update(self):
+        """Check if this is a first install or a new version update."""
+        saved_version = self.get_saved_version()
+        current_version = '1.1.0'
+        
+        if saved_version is None:
+            # First install
+            return True
+        elif saved_version != current_version:
+            # Version update
+            return True
+        else:
+            # Same version
+            return False
+    
+    def check_and_show_help_on_startup(self):
+        """Check if help/tips should be shown on startup and show it if needed."""
+        if self.is_first_install_or_update():
+            self.save_version()  # Save the current version
+            # Show help/tips window after a short delay to allow UI to load
+            self.root.after(500, self.show_help_tips)
+    
+    def show_success_dialog(self, message):
+        """Show custom success dialog with theme support (no sound)."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+        
+        # Create custom Toplevel window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Success")
+        dialog.withdraw()  # Hide window initially to prevent it from showing at wrong position
+        dialog.geometry("400x200")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+        
+        # Center the window
+        dialog.transient(self.root)
+        
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Message with word wrapping
+        msg_label = tk.Label(
+            main_frame,
+            text=message,
+            font=('Segoe UI', 11),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER,
+            wraplength=350
+        )
+        msg_label.pack(pady=(0, 30))
+        
+        # OK button
+        ok_button = tk.Button(
+            main_frame,
+            text="OK",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=5,
+            command=dialog.destroy
+        )
+        ok_button.pack()
+        
+        # Center window on screen after it's sized
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.deiconify()  # Show window after positioning
     
     def apply_peach_theme(self):
         """Apply peach theme to treeview and scrollbar only"""
@@ -8368,6 +9931,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         try:
             theme = PEACH_THEME
             self.current_theme = 'peach'
+            
+            # Update context menu theme
+            if hasattr(self, 'viz_context_menu'):
+                self.update_viz_context_menu_theme()
             
             # Disable widget updates to prevent flicker
             self.root.config(cursor="watch")
@@ -8459,6 +10026,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 )
                 
                 self.playlist_treeview.configure(style='Custom.Treeview')
+                
+                # Configure current song tag for peach theme
+                self.playlist_treeview.tag_configure('current_song', background='#FF9933')
                 
                 # Apply peach theme to header frame and its contents
                 self.apply_peach_header_frame(theme)
@@ -9155,6 +10725,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Set current theme to dark
             self.current_theme = 'dark'
             
+            # Update context menu theme
+            if hasattr(self, 'viz_context_menu'):
+                self.update_viz_context_menu_theme()
+            
             # Disable widget updates to prevent flicker
             self.root.config(cursor="watch")
             
@@ -9227,6 +10801,9 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Apply the style
                 self.playlist_treeview.configure(style='Custom.Treeview')
                 
+                # Configure current song tag for dark theme
+                self.playlist_treeview.tag_configure('current_song', background='#2d333b')
+                
                 # Add tooltip to show current selection highlight color
                 self.add_treeview_tooltip()
             
@@ -9263,8 +10840,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             # Save theme preference to settings
             self.settings['theme'] = 'dark'
             self.save_settings()
-            
-            print("Dark theme fully restored!")
             
         except Exception as e:
             print(f"Error applying dark theme: {e}")
@@ -9828,10 +11403,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             except:
                 selection_color = '#1f6feb'
             
-            # Simply print the color info to console for now
-            # Since the existing tooltip system is complex, we'll just add console output
-            print(f"Selection Highlight Color: {selection_color}")
-            
             # Also add a simple click handler to show the color
             if hasattr(self, 'playlist_treeview'):
                 def show_selection_color(event):
@@ -9857,9 +11428,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     
                     # Auto-hide after 3 seconds
                     color_window.after(3000, color_window.destroy)
-                
-                # Add right-click to show color
-                self.playlist_treeview.bind('<Button-3>', show_selection_color)
                 
         except Exception as e:
             print(f"Error adding treeview color info: {e}")
