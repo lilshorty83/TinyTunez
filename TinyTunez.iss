@@ -5,7 +5,7 @@
 AppId={{8B5A2D3E-4F7C-4A8B-9D2E-3F9A8B7C6D5E}}
 
 AppName=TinyTunez
-AppVersion=1.0.0
+AppVersion=1.1.0
 ;AppVerName=TinyTunez 1.0.0
 AppPublisher=TinyTunez
 AppPublisherURL=https://github.com/lilshorty83/TinyTunez

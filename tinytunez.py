@@ -1086,6 +1086,8 @@ class TinyTunez:
                         activebackground=active_bg, activeforeground=active_fg,
                         font=('Segoe UI', 10))
         menubar.add_cascade(label="❓ Help", menu=help_menu)
+        help_menu.add_command(label="🔄 Check for Updates", command=self.check_for_updates)
+        help_menu.add_separator()
         help_menu.add_command(label="💡 Help & Tips", command=self.show_help_tips)
         help_menu.add_command(label="ℹ️ About", command=self.show_about)
         
@@ -9515,6 +9517,638 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         """Open the Flaticon attribution link in browser."""
         import webbrowser
         webbrowser.open("https://www.flaticon.com/authors/sumberrejeki")
+
+    def check_for_updates(self):
+        """Check for updates from GitHub releases."""
+        import urllib.request
+        import json
+        from packaging import version
+
+        current_version = "1.1.0"
+        repo_url = "https://api.github.com/repos/lilshorty83/TinyTunez/releases/latest"
+
+        # Show checking dialog
+        checking_window = tk.Toplevel(self.root)
+        checking_window.title("Checking for Updates")
+        checking_window.geometry("300x100")
+        checking_window.resizable(False, False)
+
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+
+        checking_window.configure(bg=bg_color)
+
+        checking_label = tk.Label(
+            checking_window,
+            text="Checking for updates...",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg=fg_color
+        )
+        checking_label.pack(expand=True)
+
+        # Center the checking window
+        checking_window.update_idletasks()
+        x = (checking_window.winfo_screenwidth() // 2) - (checking_window.winfo_width() // 2)
+        y = (checking_window.winfo_screenheight() // 2) - (checking_window.winfo_height() // 2)
+        checking_window.geometry(f"+{x}+{y}")
+
+        def check_updates():
+            try:
+                with urllib.request.urlopen(repo_url, timeout=10) as response:
+                    data = json.loads(response.read().decode())
+                    latest_version = data['tag_name'].lstrip('v')
+                    release_notes = data.get('body', 'No release notes available.')
+                    download_url = data.get('html_url', '')
+
+                checking_window.destroy()
+
+                # Compare versions
+                if version.parse(latest_version) > version.parse(current_version):
+                    # Update available
+                    self.show_update_available_dialog(latest_version, release_notes, download_url)
+                else:
+                    # Up to date
+                    self.show_up_to_date_dialog()
+            except Exception as e:
+                checking_window.destroy()
+                self.show_update_error_dialog(str(e))
+
+        # Run check in background
+        self.root.after(100, check_updates)
+
+    def show_update_available_dialog(self, latest_version, release_notes, download_url):
+        """Show dialog when update is available."""
+        import webbrowser
+
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+            border_color = '#D4B5A0'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+            border_color = '#30363d'
+
+        update_window = tk.Toplevel(self.root)
+        update_window.title("Update Available")
+        update_window.geometry("500x400")
+        update_window.configure(bg=bg_color)
+        update_window.resizable(False, False)
+
+        # Center the window
+        update_window.transient(self.root)
+        update_window.grab_set()
+
+        # Main frame
+        main_frame = tk.Frame(update_window, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title
+        title_label = tk.Label(
+            main_frame,
+            text="Update Available!",
+            font=('Segoe UI', 16, 'bold'),
+            bg=bg_color,
+            fg='#4CAF50'
+        )
+        title_label.pack(pady=(0, 10))
+
+        # Version info
+        version_label = tk.Label(
+            main_frame,
+            text=f"Current: 1.1.0\nLatest: {latest_version}",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER
+        )
+        version_label.pack(pady=(0, 15))
+
+        # Release notes
+        notes_label = tk.Label(
+            main_frame,
+            text="Release Notes:",
+            font=('Segoe UI', 11, 'bold'),
+            bg=bg_color,
+            fg=fg_color
+        )
+        notes_label.pack(pady=(0, 5))
+
+        notes_text = tk.Text(
+            main_frame,
+            height=8,
+            width=50,
+            font=('Segoe UI', 9),
+            bg=button_bg,
+            fg=fg_color,
+            relief=tk.FLAT,
+            padx=10,
+            pady=10
+        )
+        notes_text.pack(pady=(0, 15))
+        notes_text.insert(tk.END, release_notes[:500])  # Limit to 500 chars
+        notes_text.config(state=tk.DISABLED)
+
+        # Buttons frame
+        button_frame = tk.Frame(main_frame, bg=bg_color)
+        button_frame.pack()
+
+        # Download button
+        download_button = tk.Button(
+            button_frame,
+            text="Download Update",
+            font=('Segoe UI', 10),
+            bg='#4CAF50',
+            fg='white',
+            activebackground='#45a049',
+            activeforeground='white',
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=8,
+            command=lambda: webbrowser.open(download_url)
+        )
+        download_button.pack(side=tk.LEFT, padx=5)
+
+        # Close button
+        close_button = tk.Button(
+            button_frame,
+            text="Close",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=8,
+            command=update_window.destroy
+        )
+        close_button.pack(side=tk.LEFT, padx=5)
+
+        # Center window on screen
+        update_window.update_idletasks()
+        x = (update_window.winfo_screenwidth() // 2) - (update_window.winfo_width() // 2)
+        y = (update_window.winfo_screenheight() // 2) - (update_window.winfo_height() // 2)
+        update_window.geometry(f"+{x}+{y}")
+
+    def show_up_to_date_dialog(self):
+        """Show dialog when app is up to date."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Up to Date")
+        dialog.geometry("300x150")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+
+        # Center the window
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Message
+        message_label = tk.Label(
+            main_frame,
+            text="TinyTunez is up to date!\n\nCurrent version: 1.1.0",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg='#4CAF50',
+            justify=tk.CENTER
+        )
+        message_label.pack(expand=True)
+
+        # Close button
+        close_button = tk.Button(
+            main_frame,
+            text="OK",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=8,
+            command=dialog.destroy
+        )
+        close_button.pack(pady=(10, 0))
+
+        # Center window on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+    def show_update_error_dialog(self, error_message):
+        """Show dialog when update check fails."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Update Check Failed")
+        dialog.geometry("400x150")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+
+        # Center the window
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Message
+        message_label = tk.Label(
+            main_frame,
+            text="Failed to check for updates.\n\nPlease check your internet connection.",
+            font=('Segoe UI', 11),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER
+        )
+        message_label.pack(expand=True)
+
+        # Close button
+        close_button = tk.Button(
+            main_frame,
+            text="OK",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=8,
+            command=dialog.destroy
+        )
+        close_button.pack(pady=(10, 0))
+
+        # Center window on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+    def check_for_updates(self):
+        """Check for updates from GitHub releases."""
+        import urllib.request
+        import json
+        from packaging import version
+
+        current_version = "1.1.0"
+        repo_url = "https://api.github.com/repos/lilshorty83/TinyTunez/releases/latest"
+
+        # Show checking dialog
+        checking_window = tk.Toplevel(self.root)
+        checking_window.title("Checking for Updates")
+        checking_window.geometry("300x100")
+        checking_window.resizable(False, False)
+
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+
+        checking_window.configure(bg=bg_color)
+
+        checking_label = tk.Label(
+            checking_window,
+            text="Checking for updates...",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg=fg_color
+        )
+        checking_label.pack(expand=True)
+
+        # Center the checking window
+        checking_window.update_idletasks()
+        x = (checking_window.winfo_screenwidth() // 2) - (checking_window.winfo_width() // 2)
+        y = (checking_window.winfo_screenheight() // 2) - (checking_window.winfo_height() // 2)
+        checking_window.geometry(f"+{x}+{y}")
+
+        def check_updates():
+            try:
+                with urllib.request.urlopen(repo_url, timeout=10) as response:
+                    data = json.loads(response.read().decode())
+                    latest_version = data['tag_name'].lstrip('v')
+                    release_notes = data.get('body', 'No release notes available.')
+                    download_url = data.get('html_url', '')
+
+                checking_window.destroy()
+
+                # Compare versions
+                if version.parse(latest_version) > version.parse(current_version):
+                    # Update available
+                    self.show_update_available_dialog(latest_version, release_notes, download_url)
+                else:
+                    # Up to date
+                    self.show_up_to_date_dialog()
+            except Exception as e:
+                checking_window.destroy()
+                self.show_update_error_dialog(str(e))
+
+        # Run check in background
+        self.root.after(100, check_updates)
+
+    def show_update_available_dialog(self, latest_version, release_notes, download_url):
+        """Show dialog when update is available."""
+        import webbrowser
+
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+            border_color = '#D4B5A0'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+            border_color = '#30363d'
+
+        update_window = tk.Toplevel(self.root)
+        update_window.title("Update Available")
+        update_window.geometry("500x400")
+        update_window.configure(bg=bg_color)
+        update_window.resizable(False, False)
+
+        # Center the window
+        update_window.transient(self.root)
+        update_window.grab_set()
+
+        # Main frame
+        main_frame = tk.Frame(update_window, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title
+        title_label = tk.Label(
+            main_frame,
+            text="Update Available!",
+            font=('Segoe UI', 16, 'bold'),
+            bg=bg_color,
+            fg='#4CAF50'
+        )
+        title_label.pack(pady=(0, 10))
+
+        # Version info
+        version_label = tk.Label(
+            main_frame,
+            text=f"Current: 1.1.0\nLatest: {latest_version}",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER
+        )
+        version_label.pack(pady=(0, 15))
+
+        # Release notes
+        notes_label = tk.Label(
+            main_frame,
+            text="Release Notes:",
+            font=('Segoe UI', 11, 'bold'),
+            bg=bg_color,
+            fg=fg_color
+        )
+        notes_label.pack(pady=(0, 5))
+
+        notes_text = tk.Text(
+            main_frame,
+            height=8,
+            width=50,
+            font=('Segoe UI', 9),
+            bg=button_bg,
+            fg=fg_color,
+            relief=tk.FLAT,
+            padx=10,
+            pady=10
+        )
+        notes_text.pack(pady=(0, 15))
+        notes_text.insert(tk.END, release_notes[:500])  # Limit to 500 chars
+        notes_text.config(state=tk.DISABLED)
+
+        # Buttons frame
+        button_frame = tk.Frame(main_frame, bg=bg_color)
+        button_frame.pack()
+
+        # Download button
+        download_button = tk.Button(
+            button_frame,
+            text="Download Update",
+            font=('Segoe UI', 10),
+            bg='#4CAF50',
+            fg='white',
+            activebackground='#45a049',
+            activeforeground='white',
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=8,
+            command=lambda: webbrowser.open(download_url)
+        )
+        download_button.pack(side=tk.LEFT, padx=5)
+
+        # Close button
+        close_button = tk.Button(
+            button_frame,
+            text="Close",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=15,
+            pady=8,
+            command=update_window.destroy
+        )
+        close_button.pack(side=tk.LEFT, padx=5)
+
+        # Center window on screen
+        update_window.update_idletasks()
+        x = (update_window.winfo_screenwidth() // 2) - (update_window.winfo_width() // 2)
+        y = (update_window.winfo_screenheight() // 2) - (update_window.winfo_height() // 2)
+        update_window.geometry(f"+{x}+{y}")
+
+    def show_up_to_date_dialog(self):
+        """Show dialog when app is up to date."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Up to Date")
+        dialog.geometry("300x150")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+
+        # Center the window
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Message
+        message_label = tk.Label(
+            main_frame,
+            text="TinyTunez is up to date!\n\nCurrent version: 1.1.0",
+            font=('Segoe UI', 12),
+            bg=bg_color,
+            fg='#4CAF50',
+            justify=tk.CENTER
+        )
+        message_label.pack(expand=True)
+
+        # Close button
+        close_button = tk.Button(
+            main_frame,
+            text="OK",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=8,
+            command=dialog.destroy
+        )
+        close_button.pack(pady=(10, 0))
+
+        # Center window on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+    def show_update_error_dialog(self, error_message):
+        """Show dialog when update check fails."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_color = '#FFE0CC'
+            fg_color = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+            button_active_bg = '#FF9933'
+        else:
+            bg_color = '#161b22'
+            fg_color = '#f0f6fc'
+            button_bg = '#21262d'
+            button_fg = '#f0f6fc'
+            button_active_bg = '#30363d'
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Update Check Failed")
+        dialog.geometry("400x150")
+        dialog.configure(bg=bg_color)
+        dialog.resizable(False, False)
+
+        # Center the window
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Message
+        message_label = tk.Label(
+            main_frame,
+            text="Failed to check for updates.\n\nPlease check your internet connection.",
+            font=('Segoe UI', 11),
+            bg=bg_color,
+            fg=fg_color,
+            justify=tk.CENTER
+        )
+        message_label.pack(expand=True)
+
+        # Close button
+        close_button = tk.Button(
+            main_frame,
+            text="OK",
+            font=('Segoe UI', 10),
+            bg=button_bg,
+            fg=button_fg,
+            activebackground=button_active_bg,
+            activeforeground=button_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=20,
+            pady=8,
+            command=dialog.destroy
+        )
+        close_button.pack(pady=(10, 0))
+
+        # Center window on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
     
     def show_help_tips(self):
         """Show custom Help/Tips window with multi-page support and 'Do not show again' checkbox."""
