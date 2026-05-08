@@ -3089,12 +3089,23 @@ class TinyTunez:
                                 progress['value'] = (downloaded / file_size) * 100
                                 download_dialog.update()
                 
-                # Move to Downloads folder
-                final_path = os.path.join(downloads_folder, 'TinyTunez-Setup.exe')
-                shutil.move(temp_path, final_path)
-                
-                # Close download dialog
+                # Close download dialog first
                 download_dialog.destroy()
+                
+                # Move to Downloads folder (handle existing file)
+                final_path = os.path.join(downloads_folder, 'TinyTunez-Setup.exe')
+                try:
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                    shutil.move(temp_path, final_path)
+                except Exception as move_error:
+                    # If move fails, try to copy instead
+                    try:
+                        shutil.copy2(temp_path, final_path)
+                        os.remove(temp_path)
+                    except:
+                        # If copy also fails, keep it in temp dir
+                        final_path = temp_path
                 
                 # Show success dialog with option to run installer
                 self.show_download_success_dialog(final_path)
@@ -3166,7 +3177,7 @@ class TinyTunez:
             borderwidth=0,
             padx=15,
             pady=8,
-            command=lambda: [subprocess.Popen(file_path), dialog.destroy()]
+            command=lambda: [subprocess.Popen(file_path), self.root.destroy(), dialog.destroy()]
         )
         run_button.pack(side=tk.LEFT, padx=5)
         
@@ -9811,7 +9822,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         import json
         from packaging import version
 
-        current_version = "1.1.0"
+        current_version = "1.2.0"
         repo_url = "https://api.github.com/repos/lilshorty83/TinyTunez/releases/latest"
 
         # Show checking dialog
@@ -9856,7 +9867,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     assets = data.get('assets', [])
                     download_url = ''
                     for asset in assets:
-                        if 'TinyTunez-Setup.exe' in asset.get('name', ''):
+                        asset_name = asset.get('name', '')
+                        if 'TinyTunez-Setup' in asset_name and (asset_name.endswith('.exe') or asset_name.endswith('.zip')):
                             download_url = asset.get('browser_download_url', '')
                             break
                     # Fallback to release page if no installer found
@@ -9868,10 +9880,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Compare versions
                 if version.parse(latest_version) > version.parse(current_version):
                     # Update available
-                    self.show_update_available_dialog(latest_version, release_notes, download_url)
+                    self.show_update_available_dialog(current_version, latest_version, release_notes, download_url)
                 else:
                     # Up to date
-                    self.show_up_to_date_dialog()
+                    self.show_up_to_date_dialog(current_version)
             except Exception as e:
                 checking_window.destroy()
                 self.show_update_error_dialog(str(e))
@@ -9879,7 +9891,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Run check in background
         self.root.after(100, check_updates)
 
-    def show_update_available_dialog(self, latest_version, release_notes, download_url):
+    def show_update_available_dialog(self, current_version, latest_version, release_notes, download_url):
         """Show dialog when update is available."""
         import webbrowser
 
@@ -9927,7 +9939,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Version info
         version_label = tk.Label(
             main_frame,
-            text=f"Current: 1.1.0\nLatest: {latest_version}",
+            text=f"Current: {current_version}\nLatest: {latest_version}",
             font=('Segoe UI', 12),
             bg=bg_color,
             fg=fg_color,
@@ -10004,7 +10016,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         y = (update_window.winfo_screenheight() // 2) - (update_window.winfo_height() // 2)
         update_window.geometry(f"+{x}+{y}")
 
-    def show_up_to_date_dialog(self):
+    def show_up_to_date_dialog(self, current_version):
         """Show dialog when app is up to date."""
         # Determine theme colors
         if hasattr(self, 'current_theme') and self.current_theme == 'peach':
@@ -10038,7 +10050,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Message
         message_label = tk.Label(
             main_frame,
-            text="TinyTunez is up to date!\n\nCurrent version: 1.1.0",
+            text=f"TinyTunez is up to date!\n\nCurrent version: {current_version}",
             font=('Segoe UI', 12),
             bg=bg_color,
             fg='#4CAF50',
@@ -10140,7 +10152,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         import json
         from packaging import version
 
-        current_version = "1.1.0"
+        current_version = "1.2.0"
         repo_url = "https://api.github.com/repos/lilshorty83/TinyTunez/releases/latest"
 
         # Show checking dialog
@@ -10185,7 +10197,8 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     assets = data.get('assets', [])
                     download_url = ''
                     for asset in assets:
-                        if 'TinyTunez-Setup.exe' in asset.get('name', ''):
+                        asset_name = asset.get('name', '')
+                        if 'TinyTunez-Setup' in asset_name and (asset_name.endswith('.exe') or asset_name.endswith('.zip')):
                             download_url = asset.get('browser_download_url', '')
                             break
                     # Fallback to release page if no installer found
@@ -10197,10 +10210,10 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                 # Compare versions
                 if version.parse(latest_version) > version.parse(current_version):
                     # Update available
-                    self.show_update_available_dialog(latest_version, release_notes, download_url)
+                    self.show_update_available_dialog(current_version, latest_version, release_notes, download_url)
                 else:
                     # Up to date
-                    self.show_up_to_date_dialog()
+                    self.show_up_to_date_dialog(current_version)
             except Exception as e:
                 checking_window.destroy()
                 self.show_update_error_dialog(str(e))
@@ -10208,7 +10221,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Run check in background
         self.root.after(100, check_updates)
 
-    def show_update_available_dialog(self, latest_version, release_notes, download_url):
+    def show_update_available_dialog(self, current_version, latest_version, release_notes, download_url):
         """Show dialog when update is available."""
         import webbrowser
 
@@ -10256,7 +10269,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Version info
         version_label = tk.Label(
             main_frame,
-            text=f"Current: 1.1.0\nLatest: {latest_version}",
+            text=f"Current: {current_version}\nLatest: {latest_version}",
             font=('Segoe UI', 12),
             bg=bg_color,
             fg=fg_color,
@@ -10333,7 +10346,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         y = (update_window.winfo_screenheight() // 2) - (update_window.winfo_height() // 2)
         update_window.geometry(f"+{x}+{y}")
 
-    def show_up_to_date_dialog(self):
+    def show_up_to_date_dialog(self, current_version):
         """Show dialog when app is up to date."""
         # Determine theme colors
         if hasattr(self, 'current_theme') and self.current_theme == 'peach':
@@ -10367,7 +10380,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Message
         message_label = tk.Label(
             main_frame,
-            text="TinyTunez is up to date!\n\nCurrent version: 1.1.0",
+            text=f"TinyTunez is up to date!\n\nCurrent version: {current_version}",
             font=('Segoe UI', 12),
             bg=bg_color,
             fg='#4CAF50',
