@@ -303,9 +303,6 @@ class TinyTunez:
         self.star_empty = None
         self.load_star_icons()
         
-        # Set window icon for main window and all future windows
-        self.set_window_icon(self.root)
-        
         # Audio analysis for visualization
         self.audio_data = []
         self.audio_thread = None
@@ -1492,7 +1489,6 @@ class TinyTunez:
         dialog = tk.Toplevel(self.root)
         dialog.title("Lyrics Font Size")
         dialog.geometry("400x300")
-        self.set_window_icon(dialog)
         
         # Get current theme colors
         current_theme = getattr(self, 'current_theme', 'dark')
@@ -1805,7 +1801,6 @@ class TinyTunez:
         dialog.title("Test Audio Devices")
         dialog.geometry("400x300")
         dialog.configure(bg='#161b22')
-        self.set_window_icon(dialog)
         
         tk.Label(dialog, text="Select a device to test:", bg='#161b22', fg='#f0f6fc', 
                 font=('Segoe UI', 12)).pack(pady=10)
@@ -3023,7 +3018,6 @@ class TinyTunez:
         download_dialog.title("Downloading Update")
         download_dialog.geometry("400x150")
         download_dialog.resizable(False, False)
-        self.set_window_icon(download_dialog)
         
         # Determine theme colors
         if hasattr(self, 'current_theme') and self.current_theme == 'peach':
@@ -3129,7 +3123,6 @@ class TinyTunez:
         dialog.geometry("400x180")
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
         
         # Center the dialog
         dialog.transient(self.root)
@@ -3214,7 +3207,6 @@ class TinyTunez:
         dialog.geometry("400x150")
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
         
         # Center the dialog
         dialog.transient(self.root)
@@ -4013,7 +4005,6 @@ class TinyTunez:
         window_settings_main.title("TinyTunez Settings")
         window_settings_main.geometry("630x710")
         window_settings_main.configure(bg='#0d1117')
-        self.set_window_icon(window_settings_main)
         window_settings_main.transient(self.root)
         window_settings_main.grab_set()
         
@@ -5193,7 +5184,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         window_folder_selection.title("Select Music Folders")
         window_folder_selection.geometry("700x500")
         window_folder_selection.configure(bg='#0d1117')
-        self.set_window_icon(window_folder_selection)
         window_folder_selection.transient(self.root)
         window_folder_selection.grab_set()
         
@@ -6026,7 +6016,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         window_lyrics_input.title(f"Add Lyrics - {artist} - {title}")
         window_lyrics_input.geometry("600x650")  # Increased height from 600 to 650
         window_lyrics_input.configure(bg='#0d1117')
-        self.set_window_icon(window_lyrics_input)
         window_lyrics_input.transient(self.root)
         window_lyrics_input.grab_set()
         
@@ -6241,7 +6230,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         window_synced_editor.title(f"Create Synced Lyrics - {artist} - {title}")
         window_synced_editor.geometry("900x800")
         window_synced_editor.configure(bg='#0d1117')
-        self.set_window_icon(window_synced_editor)
         window_synced_editor.transient(self.root)
         window_synced_editor.grab_set()
         
@@ -9441,7 +9429,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         dialog.title(dialog_title)
         dialog.geometry("600x500")
         dialog.configure(bg='#0d1117')
-        self.set_window_icon(dialog)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -9659,7 +9646,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         dialog.title(title)
         dialog.geometry("400x150")
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
         
         # Center the dialog
         dialog.transient(self.root)
@@ -9719,7 +9705,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         about_window.title("About TinyTunez")
         about_window.geometry("400x300")
         about_window.configure(bg=bg_color)
-        self.set_window_icon(about_window)
         about_window.resizable(False, False)
         
         # Center the window
@@ -9818,7 +9803,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         checking_window.title("Checking for Updates")
         checking_window.geometry("300x100")
         checking_window.resizable(False, False)
-        self.set_window_icon(checking_window)
 
         # Determine theme colors
         if hasattr(self, 'current_theme') and self.current_theme == 'peach':
@@ -9903,7 +9887,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         update_window.geometry("500x400")
         update_window.configure(bg=bg_color)
         update_window.resizable(False, False)
-        self.set_window_icon(update_window)
 
         # Center the window
         update_window.transient(self.root)
@@ -10024,7 +10007,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         dialog.geometry("300x150")
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
 
         # Center the window
         dialog.transient(self.root)
@@ -10089,7 +10071,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         dialog.geometry("400x150")
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
 
         # Center the window
         dialog.transient(self.root)
@@ -10147,7 +10128,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         checking_window.title("Checking for Updates")
         checking_window.geometry("300x100")
         checking_window.resizable(False, False)
-        self.set_window_icon(checking_window)
 
         # Determine theme colors
         if hasattr(self, 'current_theme') and self.current_theme == 'peach':
@@ -10232,7 +10212,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         update_window.geometry("500x400")
         update_window.configure(bg=bg_color)
         update_window.resizable(False, False)
-        self.set_window_icon(update_window)
 
         # Center the window
         update_window.transient(self.root)
@@ -10353,7 +10332,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         dialog.geometry("300x150")
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
 
         # Center the window
         dialog.transient(self.root)
@@ -10418,7 +10396,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         dialog.geometry("400x150")
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
-        self.set_window_icon(dialog)
 
         # Center the window
         dialog.transient(self.root)
@@ -10554,7 +10531,6 @@ Version 1.1.0'''
         help_window.title("Help & Tips")
         help_window.geometry("600x490")
         help_window.configure(bg=bg_color)
-        self.set_window_icon(help_window)
         help_window.resizable(False, False)
         
         # Center the window
@@ -10817,7 +10793,6 @@ Version 1.1.0'''
         dialog.title("Success")
         dialog.withdraw()  # Hide window initially to prevent it from showing at wrong position
         dialog.geometry("400x200")
-        self.set_window_icon(dialog)
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
         
