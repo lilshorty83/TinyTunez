@@ -646,7 +646,7 @@ class TinyTunez:
             text="TinyTunez", 
             font=('Segoe UI', 28, 'bold'),
             bg='#0d1117',
-            fg='#4a9eff',
+            fg='#FF0000',
             name='app_title_label'
         )
         app_title_label.pack(side=tk.LEFT, pady=20)
@@ -3063,6 +3063,7 @@ class TinyTunez:
         download_dialog.geometry(f"+{x}+{y}")
         
         def download_file():
+            success_shown = False
             try:
                 # Get the Downloads folder
                 downloads_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
@@ -3108,11 +3109,14 @@ class TinyTunez:
                         final_path = temp_path
                 
                 # Show success dialog with option to run installer
+                success_shown = True
                 self.show_download_success_dialog(final_path)
                 
             except Exception as e:
                 download_dialog.destroy()
-                self.show_download_error_dialog(str(e))
+                # Only show error dialog if success dialog wasn't shown
+                if not success_shown:
+                    self.show_download_error_dialog(str(e))
         
         # Start download in background
         self.root.after(100, download_file)
