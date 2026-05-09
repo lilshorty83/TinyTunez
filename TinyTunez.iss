@@ -5,7 +5,7 @@
 AppId={{8B5A2D3E-4F7C-4A8B-9D2E-3F9A8B7C6D5E}}
 
 AppName=TinyTunez
-AppVersion=1.2.0
+AppVersion=1.2.3
 ;AppVerName=TinyTunez 1.0.0
 AppPublisher=TinyTunez
 AppPublisherURL=https://github.com/lilshorty83/TinyTunez
@@ -16,7 +16,7 @@ DefaultGroupName=TinyTunez
 AllowNoIcons=yes
 LicenseFile=LICENSE.txt
 OutputDir=installer
-OutputBaseFilename=TinyTunez-Setup-v1.2.0
+OutputBaseFilename=TinyTunez-Setup-v1.2.3
 SetupIconFile=assets\music.ico
 Compression=lzma
 SolidCompression=yes
@@ -32,7 +32,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "dist\TinyTunez-v1.2.0.exe"; DestDir: "{app}"; DestName: "TinyTunez.exe"; Flags: ignoreversion
+Source: "dist\TinyTunez-v1.2.3\TinyTunez-v1.2.3.exe"; DestDir: "{app}"; DestName: "TinyTunez.exe"; Flags: ignoreversion
+Source: "dist\TinyTunez-v1.2.3\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs

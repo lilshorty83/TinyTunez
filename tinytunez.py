@@ -646,7 +646,7 @@ class TinyTunez:
             text="TinyTunez", 
             font=('Segoe UI', 28, 'bold'),
             bg='#0d1117',
-            fg='#FF0000',
+            fg='#FFB366',
             name='app_title_label'
         )
         app_title_label.pack(side=tk.LEFT, pady=20)
@@ -1491,7 +1491,16 @@ class TinyTunez:
         """Show a dialog to adjust lyrics font size"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Lyrics Font Size")
-        dialog.geometry("400x300")
+        
+        # Center the window
+        width = 400
+        height = 300
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         self.set_window_icon(dialog)
         
         # Get current theme colors
@@ -1536,10 +1545,6 @@ class TinyTunez:
         dialog.grab_set()
         
         # Center the dialog
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (300 // 2)
-        dialog.geometry(f"400x300+{x}+{y}")
         
         # Title
         title_label = tk.Label(dialog, text="Adjust Lyrics Font Size", 
@@ -1803,7 +1808,16 @@ class TinyTunez:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Test Audio Devices")
-        dialog.geometry("400x300")
+        
+        # Center the window
+        width = 400
+        height = 300
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.configure(bg='#161b22')
         self.set_window_icon(dialog)
         
@@ -3021,7 +3035,16 @@ class TinyTunez:
         # Show download progress dialog
         download_dialog = tk.Toplevel(self.root)
         download_dialog.title("Downloading Update")
-        download_dialog.geometry("400x150")
+        
+        # Center the window
+        width = 400
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        download_dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         download_dialog.resizable(False, False)
         self.set_window_icon(download_dialog)
         
@@ -3056,11 +3079,6 @@ class TinyTunez:
         progress = ttk.Progressbar(main_frame, length=300, mode='determinate')
         progress.pack(pady=10)
         
-        # Center the dialog
-        download_dialog.update_idletasks()
-        x = (download_dialog.winfo_screenwidth() // 2) - (download_dialog.winfo_width() // 2)
-        y = (download_dialog.winfo_screenheight() // 2) - (download_dialog.winfo_height() // 2)
-        download_dialog.geometry(f"+{x}+{y}")
         
         def download_file():
             success_shown = False
@@ -3141,7 +3159,16 @@ class TinyTunez:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Download Complete")
-        dialog.geometry("400x180")
+        
+        # Center the window
+        width = 400
+        height = 180
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         self.set_window_icon(dialog)
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
@@ -3202,11 +3229,6 @@ class TinyTunez:
         )
         close_button.pack(side=tk.LEFT, padx=5)
         
-        # Center window on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height // 2)
-        dialog.geometry(f"+{x}+{y}")
 
     def show_download_error_dialog(self, error_message):
         """Show dialog when download fails."""
@@ -3226,7 +3248,16 @@ class TinyTunez:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Download Failed")
-        dialog.geometry("400x150")
+        
+        # Center the window
+        width = 400
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         self.set_window_icon(dialog)
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
@@ -3266,11 +3297,6 @@ class TinyTunez:
         )
         close_button.pack(pady=(10, 0))
         
-        # Center window on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height // 2)
-        dialog.geometry(f"+{x}+{y}")
 
     def load_star_icons(self):
         """Load star icons from assets folder."""
@@ -4026,7 +4052,16 @@ class TinyTunez:
         """Show settings dialog with tabs."""
         window_settings_main = tk.Toplevel(self.root)
         window_settings_main.title("TinyTunez Settings")
-        window_settings_main.geometry("630x710")
+        
+        # Center the window
+        width = 630
+        height = 710
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        window_settings_main.geometry(f"{width}x{height}+{x}+{y}")
+        
         window_settings_main.configure(bg='#0d1117')
         self.set_window_icon(window_settings_main)
         window_settings_main.transient(self.root)
@@ -5207,7 +5242,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         """Show a dialog for selecting multiple folders."""
         window_folder_selection = tk.Toplevel(self.root)
         window_folder_selection.title("Select Music Folders")
-        window_folder_selection.geometry("700x500")
+        
+        # Center the window
+        width = 700
+        height = 500
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        window_folder_selection.geometry(f"{width}x{height}+{x}+{y}")
+        
         window_folder_selection.configure(bg='#0d1117')
         self.set_window_icon(window_folder_selection)
         window_folder_selection.transient(self.root)
@@ -5573,10 +5617,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         instructions.pack(pady=(0, 5))
         
         # Center dialog
-        window_folder_selection.update_idletasks()
-        x = (window_folder_selection.winfo_screenwidth() // 2) - (window_folder_selection.winfo_width() // 2)
-        y = (window_folder_selection.winfo_screenheight() // 2) - (window_folder_selection.winfo_height() // 2)
-        window_folder_selection.geometry(f"+{x}+{y}")
         
         # Apply appropriate theme to the dialog immediately after all widgets are created
         if hasattr(self, 'current_theme') and self.current_theme == 'peach':
@@ -6040,7 +6080,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         """Show dialog for manual lyrics input."""
         window_lyrics_input = tk.Toplevel(self.root)
         window_lyrics_input.title(f"Add Lyrics - {artist} - {title}")
-        window_lyrics_input.geometry("600x650")  # Increased height from 600 to 650
+        
+        # Center the window
+        width = 600
+        height = 650
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        window_lyrics_input.geometry(f"{width}x{height}+{x}+{y}")
+        
         window_lyrics_input.configure(bg='#0d1117')
         self.set_window_icon(window_lyrics_input)
         window_lyrics_input.transient(self.root)
@@ -6253,10 +6302,39 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
     
     def show_synced_lyrics_editor(self, artist, title):
         """Show dialog for creating synced lyrics by timestamping existing lines."""
+        # Determine theme colors
+        if hasattr(self, 'current_theme') and self.current_theme == 'peach':
+            bg_main = '#FFE0CC'
+            bg_secondary = '#FFE0CC'
+            fg_primary = '#2D1810'
+            fg_secondary = '#5C3A2E'
+            text_bg = '#FFF5EB'
+            text_fg = '#2D1810'
+            button_bg = '#FFB366'
+            button_fg = '#2D1810'
+        else:
+            bg_main = '#0d1117'
+            bg_secondary = '#161b22'
+            fg_primary = '#f0f6fc'
+            fg_secondary = '#8b949e'
+            text_bg = '#161b22'
+            text_fg = '#f0f6fc'
+            button_bg = '#238636'
+            button_fg = 'white'
+        
         window_synced_editor = tk.Toplevel(self.root)
         window_synced_editor.title(f"Create Synced Lyrics - {artist} - {title}")
-        window_synced_editor.geometry("900x800")
-        window_synced_editor.configure(bg='#0d1117')
+        
+        # Center the window
+        width = 900
+        height = 800
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        window_synced_editor.geometry(f"{width}x{height}+{x}+{y}")
+        
+        window_synced_editor.configure(bg=bg_main)
         self.set_window_icon(window_synced_editor)
         window_synced_editor.transient(self.root)
         window_synced_editor.grab_set()
@@ -6269,7 +6347,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         # Title
         title_label = tk.Label(window_synced_editor, text=f"Create Synced Lyrics: {artist} - {title}",
-                              font=('Segoe UI', 14, 'bold'), bg='#0d1117', fg='#f0f6fc')
+                              font=('Segoe UI', 14, 'bold'), bg=bg_main, fg=fg_primary)
         title_label.pack(pady=10)
         
         # Instructions
@@ -6277,16 +6355,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                               text="1. PASTE lyrics in the box below → then click '📝 Load Lyrics'\n"
                               "2. Start playing the song with ▶️ Play\n"
                               "3. Press SPACEBAR when you hear each line to timestamp it",
-                              font=('Segoe UI', 10), bg='#0d1117', fg='#8b949e', justify=tk.LEFT)
+                              font=('Segoe UI', 10), bg=bg_main, fg=fg_secondary, justify=tk.LEFT)
         instructions.pack(pady=5)
         
         # Control panel
-        control_frame = tk.Frame(window_synced_editor, bg='#161b22')
+        control_frame = tk.Frame(window_synced_editor, bg=bg_secondary)
         control_frame.pack(fill=tk.X, padx=20, pady=10)
         
         # Time display
         time_label = tk.Label(control_frame, textvariable=current_time, 
-                             font=('Courier New', 16, 'bold'), bg='#161b22', fg='#4a9eff')
+                             font=('Courier New', 16, 'bold'), bg=bg_secondary, fg='#4a9eff')
         time_label.pack(side=tk.LEFT, padx=10)
         
         # Control buttons
@@ -6404,24 +6482,24 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             window_synced_editor.after(100, update_time)
         
         play_btn = tk.Button(control_frame, text="▶️ Play", command=toggle_play,
-                           bg='#238636', fg='white', font=('Segoe UI', 10, 'bold'),
+                           bg=button_bg, fg=button_fg, font=('Segoe UI', 10, 'bold'),
                            padx=15, pady=5)
         play_btn.pack(side=tk.LEFT, padx=5)
         
         stop_btn = tk.Button(control_frame, text="⏹️ Stop", command=stop_song,
-                           bg='#da3633', fg='white', font=('Segoe UI', 10, 'bold'),
+                           bg=button_bg, fg=button_fg, font=('Segoe UI', 10, 'bold'),
                            padx=15, pady=5)
         stop_btn.pack(side=tk.LEFT, padx=5)
         
         # Lyrics input area
-        input_frame = tk.Frame(window_synced_editor, bg='#0d1117')
+        input_frame = tk.Frame(window_synced_editor, bg=bg_main)
         input_frame.pack(fill=tk.X, padx=20, pady=5)
         
-        tk.Label(input_frame, text="Paste lyrics here (one line per verse):", bg='#0d1117', fg='#f0f6fc',
+        tk.Label(input_frame, text="Paste lyrics here (one line per verse):", bg=bg_main, fg=fg_primary,
                 font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
         
         # Text widget for lyrics input
-        lyrics_input = tk.Text(input_frame, bg='#161b22', fg='#f0f6fc', 
+        lyrics_input = tk.Text(input_frame, bg=text_bg, fg=text_fg, 
                                font=('Segoe UI', 11), wrap=tk.WORD, height=8)
         lyrics_input.pack(fill=tk.X, pady=5)
         
@@ -6447,19 +6525,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
                     update_time()
         
         load_btn = tk.Button(input_frame, text="📝 Load Lyrics", command=load_lyrics,
-                           bg='#1f6feb', fg='white', font=('Segoe UI', 10, 'bold'),
+                           bg=button_bg, fg=button_fg, font=('Segoe UI', 10, 'bold'),
                            padx=15, pady=5)
         load_btn.pack(anchor=tk.W, pady=5)
         
         # Lyrics display with highlighting
-        display_frame = tk.Frame(window_synced_editor, bg='#0d1117')
+        display_frame = tk.Frame(window_synced_editor, bg=bg_main)
         display_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
-        tk.Label(display_frame, text="Press SPACEBAR to timestamp each line:", bg='#0d1117', fg='#f0f6fc',
+        tk.Label(display_frame, text="Press SPACEBAR to timestamp each line:", bg=bg_main, fg=fg_primary,
                 font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
         
         # Text widget for lyrics display with highlighting
-        lyrics_display = tk.Text(display_frame, bg='#161b22', fg='#f0f6fc', 
+        lyrics_display = tk.Text(display_frame, bg=text_bg, fg=text_fg, 
                                font=('Courier New', 11), wrap=tk.WORD, height=15)
         lyrics_display.pack(fill=tk.BOTH, expand=True)
         
@@ -6503,7 +6581,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         lyrics_display.tag_config('completed', background='#0d1117', foreground='#8b949e')
         
         # Buttons frame
-        button_frame = tk.Frame(window_synced_editor, bg='#0d1117')
+        button_frame = tk.Frame(window_synced_editor, bg=bg_main)
         button_frame.pack(fill=tk.X, padx=20, pady=10)
         
         def save_synced_lyrics():
@@ -6570,22 +6648,22 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         
         # Buttons
         save_btn = tk.Button(button_frame, text="💾 Save Lyrics", command=save_synced_lyrics,
-                           bg='#238636', fg='white', font=('Segoe UI', 9, 'bold'),
+                           bg=button_bg, fg=button_fg, font=('Segoe UI', 9, 'bold'),
                            padx=12, pady=6)
         save_btn.pack(side=tk.LEFT, padx=5)
         
         clear_ts_btn = tk.Button(button_frame, text="🔄 Clear Timestamps", command=clear_timestamps,
-                               bg='#f85149', fg='white', font=('Segoe UI', 9, 'bold'),
+                               bg=button_bg, fg=button_fg, font=('Segoe UI', 9, 'bold'),
                                padx=12, pady=6)
         clear_ts_btn.pack(side=tk.LEFT, padx=5)
         
         clear_btn = tk.Button(button_frame, text="🗑️ Clear All", command=clear_all,
-                            bg='#da3633', fg='white', font=('Segoe UI', 9, 'bold'),
+                            bg=button_bg, fg=button_fg, font=('Segoe UI', 9, 'bold'),
                             padx=12, pady=6)
         clear_btn.pack(side=tk.LEFT, padx=5)
         
         cancel_btn = tk.Button(button_frame, text="❌ Cancel", command=window_synced_editor.destroy,
-                             bg='#6e7681', fg='white', font=('Segoe UI', 9, 'bold'),
+                             bg=button_bg, fg=button_fg, font=('Segoe UI', 9, 'bold'),
                              padx=12, pady=6)
         cancel_btn.pack(side=tk.RIGHT, padx=5)
         
@@ -9455,7 +9533,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Create edit dialog
         dialog = tk.Toplevel(self.root, name='window_edit_lyrics')
         dialog.title(dialog_title)
-        dialog.geometry("600x500")
+        
+        # Center the window
+        width = 600
+        height = 500
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.configure(bg='#0d1117')
         self.set_window_icon(dialog)
         dialog.transient(self.root)
@@ -9468,10 +9555,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         self.bind_window_events(dialog)
         
         # Center the dialog
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (600 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (500 // 2)
-        dialog.geometry(f"600x500+{x}+{y}")
         
         # Title
         title_text = f"Editing: {self.current_lyrics_artist} - {self.current_lyrics_title}" if is_editing else f"Adding lyrics for: {self.current_lyrics_artist} - {self.current_lyrics_title}"
@@ -9673,7 +9756,16 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         """Show a custom message dialog without system sound"""
         dialog = tk.Toplevel(self.root)
         dialog.title(title)
-        dialog.geometry("400x150")
+        
+        # Center the window
+        width = 400
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.resizable(False, False)
         self.set_window_icon(dialog)
         
@@ -9705,10 +9797,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         ok_btn.pack(pady=10)
         
         # Center dialog on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
         
         dialog.wait_window()
     
@@ -9733,12 +9821,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Create custom Toplevel window
         about_window = tk.Toplevel(self.root)
         about_window.title("About TinyTunez")
-        about_window.geometry("400x300")
+        
+        # Center the window
+        width = 400
+        height = 300
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        about_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         about_window.configure(bg=bg_color)
         about_window.resizable(False, False)
         self.set_window_icon(about_window)
-        
-        # Center the window
         about_window.transient(self.root)
         about_window.grab_set()
         
@@ -9759,7 +9854,7 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         # Version info
         version_label = tk.Label(
             main_frame,
-            text="Version 1.1.0",
+            text="Version 1.2.4",
             font=('Segoe UI', 12),
             bg=bg_color,
             fg=fg_color
@@ -9810,10 +9905,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         close_button.pack()
         
         # Center window on screen
-        about_window.update_idletasks()
-        x = (about_window.winfo_screenwidth() // 2) - (about_window.winfo_width() // 2)
-        y = (about_window.winfo_screenheight() // 2) - (about_window.winfo_height() // 2)
-        about_window.geometry(f"+{x}+{y}")
     
     def open_flaticon_link(self):
         """Open the Flaticon attribution link in browser."""
@@ -9826,13 +9917,22 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         import json
         from packaging import version
 
-        current_version = "1.2.0"
+        current_version = "1.2.4"
         repo_url = "https://api.github.com/repos/lilshorty83/TinyTunez/releases/latest"
 
         # Show checking dialog
         checking_window = tk.Toplevel(self.root)
         checking_window.title("Checking for Updates")
-        checking_window.geometry("300x100")
+        
+        # Center the checking window
+        width = 300
+        height = 100
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        checking_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         checking_window.resizable(False, False)
         self.set_window_icon(checking_window)
 
@@ -9854,12 +9954,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             fg=fg_color
         )
         checking_label.pack(expand=True)
-
-        # Center the checking window
-        checking_window.update_idletasks()
-        x = (checking_window.winfo_screenwidth() // 2) - (checking_window.winfo_width() // 2)
-        y = (checking_window.winfo_screenheight() // 2) - (checking_window.winfo_height() // 2)
-        checking_window.geometry(f"+{x}+{y}")
 
         def check_updates():
             try:
@@ -9917,12 +10011,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
 
         update_window = tk.Toplevel(self.root)
         update_window.title("Update Available")
-        update_window.geometry("500x400")
+        
+        # Set centered geometry immediately (like main window)
+        width = 500
+        height = 400
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        update_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         update_window.configure(bg=bg_color)
         update_window.resizable(False, False)
         self.set_window_icon(update_window)
-
-        # Center the window
         update_window.transient(self.root)
         update_window.grab_set()
 
@@ -10014,11 +10115,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         )
         close_button.pack(side=tk.LEFT, padx=5)
 
-        # Center window on screen
-        update_window.update_idletasks()
-        x = (update_window.winfo_screenwidth() // 2) - (update_window.winfo_width() // 2)
-        y = (update_window.winfo_screenheight() // 2) - (update_window.winfo_height() // 2)
-        update_window.geometry(f"+{x}+{y}")
 
     def show_up_to_date_dialog(self, current_version):
         """Show dialog when app is up to date."""
@@ -10038,12 +10134,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Up to Date")
-        dialog.geometry("300x150")
+        
+        # Center the window
+        width = 300
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
         self.set_window_icon(dialog)
-
-        # Center the window
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -10079,11 +10182,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         )
         close_button.pack(pady=(10, 0))
 
-        # Center window on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
 
     def show_update_error_dialog(self, error_message):
         """Show dialog when update check fails."""
@@ -10103,12 +10201,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Update Check Failed")
-        dialog.geometry("400x150")
+        
+        # Center the window
+        width = 400
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
         self.set_window_icon(dialog)
-
-        # Center the window
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -10144,11 +10249,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         )
         close_button.pack(pady=(10, 0))
 
-        # Center window on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
 
     def check_for_updates(self):
         """Check for updates from GitHub releases."""
@@ -10156,13 +10256,22 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         import json
         from packaging import version
 
-        current_version = "1.2.0"
+        current_version = "1.2.4"
         repo_url = "https://api.github.com/repos/lilshorty83/TinyTunez/releases/latest"
 
         # Show checking dialog
         checking_window = tk.Toplevel(self.root)
         checking_window.title("Checking for Updates")
-        checking_window.geometry("300x100")
+        
+        # Center the checking window
+        width = 300
+        height = 100
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        checking_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         checking_window.resizable(False, False)
         self.set_window_icon(checking_window)
 
@@ -10184,12 +10293,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
             fg=fg_color
         )
         checking_label.pack(expand=True)
-
-        # Center the checking window
-        checking_window.update_idletasks()
-        x = (checking_window.winfo_screenwidth() // 2) - (checking_window.winfo_width() // 2)
-        y = (checking_window.winfo_screenheight() // 2) - (checking_window.winfo_height() // 2)
-        checking_window.geometry(f"+{x}+{y}")
 
         def check_updates():
             try:
@@ -10247,12 +10350,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
 
         update_window = tk.Toplevel(self.root)
         update_window.title("Update Available")
-        update_window.geometry("500x400")
+        
+        # Set centered geometry immediately (like main window)
+        width = 500
+        height = 400
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        update_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         update_window.configure(bg=bg_color)
         update_window.resizable(False, False)
         self.set_window_icon(update_window)
-
-        # Center the window
         update_window.transient(self.root)
         update_window.grab_set()
 
@@ -10344,11 +10454,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         )
         close_button.pack(side=tk.LEFT, padx=5)
 
-        # Center window on screen
-        update_window.update_idletasks()
-        x = (update_window.winfo_screenwidth() // 2) - (update_window.winfo_width() // 2)
-        y = (update_window.winfo_screenheight() // 2) - (update_window.winfo_height() // 2)
-        update_window.geometry(f"+{x}+{y}")
 
     def show_up_to_date_dialog(self, current_version):
         """Show dialog when app is up to date."""
@@ -10368,12 +10473,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Up to Date")
-        dialog.geometry("300x150")
+        
+        # Center the window
+        width = 300
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
         self.set_window_icon(dialog)
-
-        # Center the window
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -10409,11 +10521,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         )
         close_button.pack(pady=(10, 0))
 
-        # Center window on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
 
     def show_update_error_dialog(self, error_message):
         """Show dialog when update check fails."""
@@ -10433,12 +10540,19 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Update Check Failed")
-        dialog.geometry("400x150")
+        
+        # Center the window
+        width = 400
+        height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        
         dialog.configure(bg=bg_color)
         dialog.resizable(False, False)
         self.set_window_icon(dialog)
-
-        # Center the window
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -10474,11 +10588,6 @@ Canvas Size: {child.winfo_width()}x{child.winfo_height()}"""
         )
         close_button.pack(pady=(10, 0))
 
-        # Center window on screen
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
     
     def show_help_tips(self):
         """Show custom Help/Tips window with multi-page support and 'Do not show again' checkbox."""
@@ -10570,12 +10679,19 @@ Version 1.1.0'''
         # Create custom Toplevel window
         help_window = tk.Toplevel(self.root)
         help_window.title("Help & Tips")
-        help_window.geometry("600x490")
+        
+        # Center the window
+        width = 600
+        height = 490
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        help_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         help_window.configure(bg=bg_color)
         help_window.resizable(False, False)
         self.set_window_icon(help_window)
-        
-        # Center the window
         help_window.transient(self.root)
         help_window.grab_set()
         
@@ -10737,10 +10853,6 @@ Version 1.1.0'''
         close_button.pack(side=tk.RIGHT)
         
         # Center window on screen
-        help_window.update_idletasks()
-        x = (help_window.winfo_screenwidth() // 2) - (help_window.winfo_width() // 2)
-        y = (help_window.winfo_screenheight() // 2) - (help_window.winfo_height() // 2)
-        help_window.geometry(f"+{x}+{y}")
     
     def save_help_tips_preference(self, show_help):
         """Save the help/tips 'show again' preference."""
@@ -10876,10 +10988,6 @@ Version 1.1.0'''
         ok_button.pack()
         
         # Center window on screen after it's sized
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
         dialog.deiconify()  # Show window after positioning
     
     def apply_peach_theme(self):
@@ -11660,7 +11768,7 @@ Version 1.1.0'''
                 # Labels - restore original dark styling from create_widgets
                 elif widget_class == 'Label':
                     if widget_name == 'app_title_label':
-                        widget.configure(bg='#0d1117', fg='#4a9eff')  # Exact original from create_widgets line 530-531
+                        widget.configure(bg='#0d1117', fg='#FFB366')  # Orange
                     elif widget_name == 'app_subtitle_label':
                         widget.configure(bg='#0d1117', fg='#8b949e')  # Exact original from create_widgets line 540-541
                     elif widget_name == 'header_icon_label':
@@ -11933,7 +12041,7 @@ Version 1.1.0'''
                 elif widget_class == 'Label':
                     # Special handling for specific labels
                     if widget_name in ['app_title_label', 'app_subtitle_label']:
-                        widget.configure(bg='#0d1117', fg='#4a9eff')  # Original dark colors for title
+                        widget.configure(bg='#0d1117', fg='#FFB366')  # Orange for title
                         if widget_name == 'app_subtitle_label':
                             widget.configure(fg='#8b949e')  # Original dark color for subtitle
                     elif widget_name in ['song_title_label', 'song_artist_label']:
@@ -12314,7 +12422,7 @@ Version 1.1.0'''
                 if widget_class == 'Label':
                     # Header labels - restore to original dark colors from create_widgets
                     if widget_name == 'app_title_label':
-                        widget.configure(bg='#0d1117', fg='#4a9eff')  # Exact original from create_widgets line 530-531
+                        widget.configure(bg='#0d1117', fg='#FFB366')  # Orange
                     elif widget_name == 'app_subtitle_label':
                         widget.configure(bg='#0d1117', fg='#8b949e')  # Exact original from create_widgets line 540-541
                     elif widget_name == 'header_icon_label':
